@@ -9,6 +9,7 @@ A completely free, client-side browser extension to synchronize FTU class schedu
 3. Navigate to the extensions page (`chrome://extensions` or `edge://extensions`).
 4. Enable **Developer Mode**.
 5. Click **Load unpacked** and select the directory containing this project (the root directory where `manifest.json` is located).
+6. Contact the owner (aka me) so I can approve your email as a tester
 
 ## Features
 
