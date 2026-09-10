@@ -1,622 +1,1181 @@
-import { t, setLang, getLang } from './i18n.js';
-import { getSessionToken, clearSessionToken, verifyTkbTuanAccess, extractClassesFromSchedule } from './portalService.js';
-import { authorizeGoogle, checkAuth, logoutGoogle, syncWeekToGoogleCalendar } from './calendarService.js';
-import { parseExcel, generateICS } from './excelParser.js';
+import { 
+  getSessionToken, 
+  getActiveSemesterInfo, 
+  getSchedule, 
+  verifyPortalAccess, 
+  savePortalCredentials, 
+  getStoredPortalCredentials,
+  portalLogin
+} from './portalService.js';
 
-// DOM Elements
-const els = {
-    title: document.getElementById('ui_title'),
-    btnToggleLang: document.getElementById('btn_toggle_lang'),
-    btnToggleTheme: document.getElementById('btn_toggle_theme'),
-    btnToggleAccounts: document.getElementById('btn_toggle_accounts'),
-    btnCollapseAccounts: document.getElementById('btn_collapse_accounts'),
-    accountMenuCard: document.getElementById('account_menu_card'),
-    accountMenuBody: document.getElementById('account_menu_body'),
-    uiAccountMenu: document.getElementById('ui_account_menu'),
-    
-    // Google elements
-    uiGoogleAccount: document.getElementById('ui_google_account'),
-    googleUserEmail: document.getElementById('google_user_email'),
-    googleUserName: document.getElementById('google_user_name'),
-    badgeGoogle: document.getElementById('badge_google'),
-    btnGoogleAuth: document.getElementById('btn_google_auth'),
-    btnGoogleSwitch: document.getElementById('btn_google_switch'),
-    btnGoogleLogout: document.getElementById('btn_google_logout'),
+import { 
+  authorizeGoogle, 
+  logoutGoogle, 
+  checkAuth, 
+  syncScheduleToGoogleCalendar, 
+  cleanCalendarDuplicates,
+  PERIOD_TIMES,
+  extractCourseCode
+} from './calendarService.js';
 
-    // Portal elements
-    uiPortalAccount: document.getElementById('ui_portal_account'),
-    portalStudentName: document.getElementById('portal_student_name'),
-    portalStudentDetails: document.getElementById('portal_student_details'),
-    portalStudentIdVal: document.getElementById('portal_student_id_val'),
-    portalStudentEmailVal: document.getElementById('portal_student_email_val'),
-    badgePortal: document.getElementById('badge_portal'),
-    btnDiagnostic: document.getElementById('btn_diagnostic'),
-    btnPortalLogout: document.getElementById('btn_portal_logout'),
-    
-    // /tkb-tuan banner
-    tkbVerificationBanner: document.getElementById('tkb_verification_banner'),
-    tkbStatusIcon: document.getElementById('tkb_status_icon'),
-    tkbStatusTitle: document.getElementById('tkb_status_title'),
-    badgeTkb: document.getElementById('badge_tkb'),
-    tkbStatusDesc: document.getElementById('tkb_status_desc'),
+import { 
+  t, 
+  setLang, 
+  getLang 
+} from './i18n.js';
 
-    // Credentials drawer
-    uiPortalCredentials: document.getElementById('ui_portal_credentials'),
-    btnToggleCredsView: document.getElementById('btn_toggle_creds_view'),
-    credsFormBody: document.getElementById('creds_form_body'),
-    inputStudentId: document.getElementById('input_student_id'),
-    inputPassword: document.getElementById('input_password'),
-    btnSaveCreds: document.getElementById('btn_save_creds'),
+import {
+  parseExcel,
+  generateICS,
+  generateMakeupICS,
+  downloadICS,
+  convertPortalScheduleToEvents
+} from './excelParser.js';
 
-    // Week Sync controls
-    uiSyncWeekTitle: document.getElementById('ui_sync_week_title'),
-    uiLabelSelectWeek: document.getElementById('ui_label_select_week'),
-    selectSyncWeek: document.getElementById('select_sync_week'),
-    btnSyncWeekCalendar: document.getElementById('btn_sync_week_calendar'),
-    syncResultBox: document.getElementById('sync_result_box'),
-    syncResultStatus: document.getElementById('sync_result_status'),
-    syncResultDetails: document.getElementById('sync_result_details'),
-
-    // Today's classes
-    uiTodayClasses: document.getElementById('ui_today_classes'),
-    todayDateBadge: document.getElementById('today_date_badge'),
-    todayAgenda: document.getElementById('today_agenda'),
-    noClasses: document.getElementById('ui_no_classes'),
-
-    // Manual tools
-    uiManualTools: document.getElementById('ui_manual_tools'),
-    dropZone: document.getElementById('drop_zone'),
-    uiDropExcel: document.getElementById('ui_drop_excel'),
-    btnExportSemester: document.getElementById('btn_export_semester'),
-    btnExportMakeup: document.getElementById('btn_export_makeup'),
-    versionDisplay: document.getElementById('version_display')
+// Global state in popup session
+let state = {
+  activeView: 'view_schedule',
+  scheduleSubView: 'day', // 'day' | 'week'
+  googleAccount: null,
+  portalToken: null,
+  portalProfile: null,
+  portalVerification: null,
+  semesterInfo: null,
+  scheduleData: null,
+  selectedWeekIndex: 0,
+  theme: 'light',
+  lang: 'vi'
 };
 
-let isAccountsCollapsed = false;
+// Initial entry point with document.readyState check (fixes module deferral race condition)
+async function initApp() {
+  console.log('[FTU Sync] Initializing popup application...');
+  // 1. Immediately bind UI events so tabs and buttons are 100% interactive without waiting for network/storage
+  try {
+    bindUIEvents();
+  } catch (err) {
+    console.error('[FTU Sync] Error binding UI events:', err);
+  }
 
-async function init() {
-    // Set version
-    els.versionDisplay.textContent = `v${chrome.runtime.getManifest().version}`;
+  // 2. Load stored preferences & theme
+  try {
+    await loadStoredPreferences();
+  } catch (err) {
+    console.warn('[FTU Sync] Stored preferences load warning:', err);
+  }
 
-    // Load preferences & stored credentials
-    chrome.storage.local.get(['theme', 'lang', 'studentId', 'password', 'googleAccount', 'studentProfile', 'portalVerification', 'cachedSchedule'], (res) => {
-        if (res.theme === 'dark') document.body.className = 'theme-dark';
-        if (res.lang) setLang(res.lang);
-        
-        // Populate credentials ONLY from storage (no hardcoding)
-        els.inputStudentId.value = res.studentId || '';
-        els.inputPassword.value = res.password || '';
+  // 3. Update internationalized labels
+  try {
+    updateI18nLabels();
+  } catch (err) {
+    console.warn('[FTU Sync] i18n update warning:', err);
+  }
 
-        // Check if accounts collapsed state was stored
-        if (res.accountsCollapsed) {
-            isAccountsCollapsed = true;
-            els.accountMenuBody.style.display = 'none';
-            els.btnCollapseAccounts.textContent = 'Show ▼';
-        }
-
-        updateUIStrings();
-
-        // Restore Google account view if stored
-        if (res.googleAccount && res.googleAccount.email) {
-            renderGoogleAccount(res.googleAccount);
-        }
-
-        // Restore Portal profile view if stored
-        if (res.studentProfile) {
-            renderPortalProfile(res.studentProfile);
-        }
-
-        // Restore verification banner if stored
-        if (res.portalVerification) {
-            renderTkbVerification(res.portalVerification);
-        }
-
-        // Restore schedule if cached
-        if (res.cachedSchedule) {
-            renderScheduleClasses(res.cachedSchedule);
-            populateWeekSelector(res.cachedSchedule);
-        }
-
-        // If credentials are not present, open form to invite user to enter credentials
-        if (!res.studentId || !res.password) {
-            els.credsFormBody.style.display = 'block';
-            els.btnToggleCredsView.textContent = 'Close';
-            els.badgePortal.className = 'badge badge-neutral';
-            els.badgePortal.textContent = 'Credentials Needed';
-            renderTkbVerification({
-                success: false,
-                error: t('enter_credentials_msg')
-            });
-        } else {
-            // Run diagnostic check using saved credentials
-            runDiagnostic();
-        }
-    });
-
-    // Check Auth State for Google
-    const googleAccount = await checkAuth();
-    renderGoogleAccount(googleAccount);
-
-    // Setup Listeners
-    els.btnToggleLang.addEventListener('click', toggleLang);
-    els.btnToggleTheme.addEventListener('click', toggleTheme);
-    els.btnToggleAccounts.addEventListener('click', toggleAccountsDrawer);
-    els.btnCollapseAccounts.addEventListener('click', toggleAccountsDrawer);
-    els.btnToggleCredsView.addEventListener('click', toggleCredsForm);
-    
-    els.btnGoogleAuth.addEventListener('click', doGoogleAuth);
-    els.btnGoogleSwitch.addEventListener('click', doGoogleAuth);
-    els.btnGoogleLogout.addEventListener('click', doGoogleLogout);
-
-    els.btnDiagnostic.addEventListener('click', runDiagnostic);
-    els.btnPortalLogout.addEventListener('click', doPortalLogout);
-    els.btnSaveCreds.addEventListener('click', saveCreds);
-
-    // Week Sync Listener
-    if (els.btnSyncWeekCalendar) {
-        els.btnSyncWeekCalendar.addEventListener('click', handleSyncWeek);
-    }
-    
-    // Drop zone
-    els.dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        els.dropZone.classList.add('dragover');
-    });
-    els.dropZone.addEventListener('dragleave', () => {
-        els.dropZone.classList.remove('dragover');
-    });
-    els.dropZone.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        els.dropZone.classList.remove('dragover');
-        const file = e.dataTransfer.files[0];
-        if (file) handleExcelDrop(file);
-    });
-
-    // ICS Buttons
-    els.btnExportSemester.addEventListener('click', exportFullSemester);
-    els.btnExportMakeup.addEventListener('click', exportMakeup);
+  // 4. Run initial connection check and route guard
+  try {
+    await runInitialConnectionCheck();
+  } catch (err) {
+    console.warn('[FTU Sync] Initial connection check warning:', err);
+  }
 }
 
-function toggleAccountsDrawer() {
-    isAccountsCollapsed = !isAccountsCollapsed;
-    els.accountMenuBody.style.display = isAccountsCollapsed ? 'none' : 'block';
-    els.btnCollapseAccounts.textContent = isAccountsCollapsed ? 'Show ▼' : 'Hide ▲';
-    chrome.storage.local.set({ accountsCollapsed: isAccountsCollapsed });
-}
-
-function toggleCredsForm() {
-    const isHidden = els.credsFormBody.style.display === 'none';
-    els.credsFormBody.style.display = isHidden ? 'block' : 'none';
-    els.btnToggleCredsView.textContent = isHidden ? 'Close' : 'Edit';
-}
-
-function updateUIStrings() {
-    els.title.textContent = t('title');
-    if (els.uiAccountMenu) els.uiAccountMenu.textContent = t('account_menu');
-    if (els.uiGoogleAccount) els.uiGoogleAccount.textContent = t('google_account');
-    if (els.uiPortalAccount) els.uiPortalAccount.textContent = t('portal_account');
-    
-    els.uiPortalCredentials.textContent = t('portal_credentials');
-    els.uiTodayClasses.textContent = t('today_classes');
-    els.uiManualTools.textContent = t('manual_tools');
-    els.btnDiagnostic.textContent = t('verify_now');
-    els.inputStudentId.placeholder = t('student_id');
-    els.inputPassword.placeholder = t('password');
-    els.btnSaveCreds.textContent = t('save');
-    els.noClasses.textContent = t('no_classes');
-    els.btnGoogleAuth.textContent = t('connect_google');
-    els.btnGoogleSwitch.textContent = t('switch_account');
-    els.btnGoogleLogout.textContent = t('disconnect');
-    els.uiDropExcel.textContent = t('drop_excel');
-    els.btnExportSemester.textContent = t('export_semester');
-    els.btnExportMakeup.textContent = t('export_makeup');
-
-    if (els.uiSyncWeekTitle) els.uiSyncWeekTitle.textContent = t('sync_week_title');
-    if (els.uiLabelSelectWeek) els.uiLabelSelectWeek.textContent = t('label_select_week');
-    if (els.btnSyncWeekCalendar) els.btnSyncWeekCalendar.textContent = t('btn_sync_week');
-}
-
-function toggleLang() {
-    const newLang = getLang() === 'vi' ? 'en' : 'vi';
-    setLang(newLang);
-    chrome.storage.local.set({ lang: newLang });
-    updateUIStrings();
-}
-
-function toggleTheme() {
-    const isDark = document.body.className === 'theme-dark';
-    document.body.className = isDark ? 'theme-light' : 'theme-dark';
-    chrome.storage.local.set({ theme: isDark ? 'light' : 'dark' });
-}
-
-async function doGoogleAuth() {
-    try {
-        const account = await authorizeGoogle();
-        renderGoogleAccount(account);
-    } catch(e) {
-        console.error('[Google Auth Error]', e);
-        renderGoogleAccount(null);
-    }
-}
-
-async function doGoogleLogout() {
-    await logoutGoogle();
-    renderGoogleAccount(null);
-}
-
-function renderGoogleAccount(account) {
-    if (account && account.email) {
-        els.badgeGoogle.className = 'badge badge-green';
-        els.badgeGoogle.textContent = t('connected');
-        els.googleUserEmail.textContent = account.email;
-        els.googleUserEmail.style.color = 'var(--text-main)';
-        els.googleUserName.textContent = account.name ? `Account: ${account.name}` : '';
-        els.googleUserName.style.display = account.name ? 'block' : 'none';
-
-        els.btnGoogleAuth.style.display = 'none';
-        els.btnGoogleSwitch.style.display = 'inline-block';
-        els.btnGoogleLogout.style.display = 'inline-block';
-    } else {
-        els.badgeGoogle.className = 'badge badge-amber';
-        els.badgeGoogle.textContent = t('not_authorized');
-        els.googleUserEmail.textContent = 'Not connected';
-        els.googleUserEmail.style.color = 'var(--text-gray)';
-        els.googleUserName.style.display = 'none';
-
-        els.btnGoogleAuth.style.display = 'inline-block';
-        els.btnGoogleSwitch.style.display = 'none';
-        els.btnGoogleLogout.style.display = 'none';
-    }
-}
-
-function renderPortalProfile(profile) {
-    if (profile && profile.name) {
-        els.portalStudentName.textContent = profile.name;
-        els.portalStudentName.style.color = 'var(--text-main)';
-        els.portalStudentDetails.style.display = 'block';
-        els.portalStudentIdVal.textContent = `ID: ${profile.studentId || ''}`;
-        els.portalStudentEmailVal.textContent = profile.email || `${profile.studentId}@ftu.edu.vn`;
-        els.btnPortalLogout.style.display = 'inline-block';
-    } else {
-        els.portalStudentName.textContent = 'Not authenticated';
-        els.portalStudentName.style.color = 'var(--text-gray)';
-        els.portalStudentDetails.style.display = 'none';
-        els.btnPortalLogout.style.display = 'none';
-    }
-}
-
-function renderTkbVerification(verification) {
-    if (verification && verification.success) {
-        els.tkbVerificationBanner.className = 'tkb-verification-banner verified';
-        els.tkbStatusIcon.textContent = '✅';
-        els.badgeTkb.className = 'badge badge-green';
-        els.badgeTkb.textContent = t('tkb_tuan_verified');
-        els.tkbStatusDesc.innerHTML = `
-            <strong>Connection Confirmed!</strong> Access to <code>/tkb-tuan</code> verified.<br>
-            ${verification.semesterName || 'Học kỳ hiện tại'} &bull; ${verification.totalWeeks || 0} tuần &bull; ${verification.totalClasses || 0} buổi học
-        `;
-    } else {
-        els.tkbVerificationBanner.className = 'tkb-verification-banner failed';
-        els.tkbStatusIcon.textContent = '⚠️';
-        els.badgeTkb.className = 'badge badge-red';
-        els.badgeTkb.textContent = t('tkb_tuan_failed');
-        els.tkbStatusDesc.textContent = verification?.error 
-            ? `Connection not confirmed: ${verification.error}`
-            : 'Connection requires successful access to /tkb-tuan schedule data.';
-    }
-}
-
-function doPortalLogout() {
-    clearSessionToken();
-    chrome.storage.local.remove(['studentProfile', 'portalVerification', 'cachedSchedule'], () => {
-        els.badgePortal.className = 'badge badge-red';
-        els.badgePortal.textContent = t('session_expired');
-        renderPortalProfile(null);
-        renderTkbVerification({ success: false, error: 'User logged out' });
-        els.todayAgenda.innerHTML = `<p id="ui_no_classes" class="text-sm text-gray">${t('no_classes')}</p>`;
-    });
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  // DOM is already parsed (common in deferred ES Modules)
+  initApp();
 }
 
 /**
- * Diagnostic login & verification:
- * Only indicates connection as SUCCESSFUL if the app can access /tkb-tuan.
+ * Loads stored theme, language, and background sync preferences.
  */
-async function runDiagnostic() {
-    els.btnDiagnostic.disabled = true;
-    els.btnDiagnostic.textContent = 'Checking /tkb-tuan...';
-
-    try {
-        const studentId = els.inputStudentId.value.trim();
-        const password = els.inputPassword.value.trim();
-        
-        if (!studentId || !password) {
-            els.badgePortal.className = 'badge badge-neutral';
-            els.badgePortal.textContent = 'Credentials Needed';
-            renderPortalProfile(null);
-            renderTkbVerification({
-                success: false,
-                error: t('enter_credentials_msg')
-            });
-            els.credsFormBody.style.display = 'block';
-            els.btnToggleCredsView.textContent = 'Close';
-            return;
-        }
-
-        chrome.storage.local.set({ studentId, password });
-
-        const session = await getSessionToken();
-        if (!session || !session.success || !session.token) {
-            els.badgePortal.className = 'badge badge-red';
-            els.badgePortal.textContent = t('session_expired');
-            renderPortalProfile(null);
-            renderTkbVerification({
-                success: false,
-                error: session?.error || 'Authentication failed'
-            });
-            return;
-        }
-
-        // Display authenticated student info
-        if (session.profile) {
-            renderPortalProfile(session.profile);
-        }
-
-        // CRITICAL: Now verify actual access to /tkb-tuan!
-        const verification = await verifyTkbTuanAccess(session.token);
-
-        if (verification && verification.success) {
-            // Success ONLY when /tkb-tuan is accessible!
-            els.badgePortal.className = 'badge badge-green';
-            els.badgePortal.textContent = t('connected');
-            renderTkbVerification(verification);
-
-            if (verification.scheduleData) {
-                renderScheduleClasses(verification.scheduleData);
-                populateWeekSelector(verification.scheduleData);
-            }
+async function loadStoredPreferences() {
+  return new Promise((resolve) => {
+    const applyData = (res = {}) => {
+      try {
+        // Theme
+        if (res.appTheme === 'dark') {
+          setTheme('dark');
         } else {
-            // If /tkb-tuan failed, mark connection as NOT successful
-            els.badgePortal.className = 'badge badge-red';
-            els.badgePortal.textContent = 'TKB Inaccessible';
-            renderTkbVerification(verification);
-        }
-    } catch (err) {
-        console.error('[runDiagnostic Error]', err);
-        els.badgePortal.className = 'badge badge-red';
-        els.badgePortal.textContent = 'Error';
-        renderTkbVerification({
-            success: false,
-            error: err.message || 'Error communicating with portal'
-        });
-    } finally {
-        els.btnDiagnostic.disabled = false;
-        els.btnDiagnostic.textContent = t('verify_now');
-    }
-}
-
-function saveCreds() {
-    const studentId = els.inputStudentId.value.trim();
-    const password = els.inputPassword.value.trim();
-    
-    if (!studentId || !password) {
-        alert(t('enter_credentials_msg'));
-        return;
-    }
-
-    chrome.storage.local.set({
-        studentId,
-        password
-    }, () => {
-        clearSessionToken();
-        runDiagnostic();
-    });
-    
-    const orig = els.btnSaveCreds.textContent;
-    els.btnSaveCreds.textContent = "✓ Saved & Verifying";
-    setTimeout(() => els.btnSaveCreds.textContent = orig, 1500);
-}
-
-function populateWeekSelector(scheduleData) {
-    if (!els.selectSyncWeek || !scheduleData?.ds_tuan_tkb) return;
-    window.currentScheduleData = scheduleData;
-    const weeks = scheduleData.ds_tuan_tkb;
-    els.selectSyncWeek.innerHTML = '';
-
-    const today = new Date();
-    // UTC+7 timestamp
-    const todayVn = new Date(today.getTime() + (7 * 60 + today.getTimezoneOffset()) * 60000).getTime();
-
-    let currentWeekIndex = -1;
-
-    weeks.forEach((w, index) => {
-        const opt = document.createElement('option');
-        opt.value = String(index);
-
-        let label = w.thong_tin_tuan || `Tuần ${index + 1} (${w.ngay_bat_dau} - ${w.ngay_ket_thuc})`;
-
-        // Determine if today falls in this week
-        if (w.ngay_bat_dau && w.ngay_ket_thuc) {
-            const [d1, m1, y1] = w.ngay_bat_dau.split('/').map(Number);
-            const [d2, m2, y2] = w.ngay_ket_thuc.split('/').map(Number);
-            const startTime = new Date(y1, m1 - 1, d1, 0, 0, 0).getTime();
-            const endTime = new Date(y2, m2 - 1, d2, 23, 59, 59).getTime();
-
-            if (todayVn >= startTime && todayVn <= endTime) {
-                currentWeekIndex = index;
-                label = `⭐ ${label} (Tuần hiện tại)`;
-            }
+          setTheme('light');
         }
 
-        const classCount = w.ds_thoi_khoa_bieu ? w.ds_thoi_khoa_bieu.length : 0;
-        opt.textContent = `${label} [${classCount} buổi]`;
-        els.selectSyncWeek.appendChild(opt);
-    });
-
-    if (currentWeekIndex !== -1) {
-        els.selectSyncWeek.value = String(currentWeekIndex);
-    } else if (weeks.length > 0) {
-        els.selectSyncWeek.value = "0";
-    }
-}
-
-async function handleSyncWeek() {
-    if (!els.btnSyncWeekCalendar) return;
-
-    // 1. Verify Google authentication
-    let googleAccount = await checkAuth();
-    if (!googleAccount || !googleAccount.token) {
-        try {
-            googleAccount = await doGoogleAuth();
-        } catch (e) {
-            showSyncResult(false, '⚠️ Chưa kết nối Google Calendar', 'Vui lòng kết nối tài khoản Google trước khi đồng bộ.');
-            return;
-        }
-    }
-
-    if (!googleAccount || !googleAccount.token) {
-        showSyncResult(false, '⚠️ Chưa kết nối Google Calendar', 'Vui lòng kết nối tài khoản Google trước khi đồng bộ.');
-        return;
-    }
-
-    // 2. Verify schedule data is available
-    const schedule = window.currentScheduleData;
-    if (!schedule || !schedule.ds_tuan_tkb || schedule.ds_tuan_tkb.length === 0) {
-        showSyncResult(false, '⚠️ Chưa có dữ liệu thời khóa biểu', 'Vui lòng nhấn "Kiểm tra /tkb-tuan" để tải thời khóa biểu tuần từ Cổng Đào Tạo trước.');
-        return;
-    }
-
-    const weekIdx = parseInt(els.selectSyncWeek.value, 10);
-    const selectedWeek = schedule.ds_tuan_tkb[weekIdx] || schedule.ds_tuan_tkb[0];
-
-    if (!selectedWeek) {
-        showSyncResult(false, '⚠️ Tuần không hợp lệ', 'Không tìm thấy dữ liệu cho tuần đã chọn.');
-        return;
-    }
-
-    const origText = els.btnSyncWeekCalendar.textContent;
-    els.btnSyncWeekCalendar.disabled = true;
-    els.btnSyncWeekCalendar.textContent = '⏳ Đang đồng bộ vào nhãn "FTU Schedule"...';
-
-    try {
-        const result = await syncWeekToGoogleCalendar(googleAccount.token, selectedWeek);
-
-        let detailsHtml = `
-            &bull; Thêm mới vào Google Calendar: <strong>${result.insertedCount}</strong> buổi học<br>
-            &bull; Ghi đè/cập nhật thông tin mới: <strong>${result.updatedCount}</strong> buổi học (đồng bộ phòng học/thông tin từ Cổng Đào Tạo)<br>
-            &bull; Đã có sẵn & khớp hoàn toàn: <strong>${result.skippedCount}</strong> buổi học
-        `;
-
-        if (result.changes && result.changes.length > 0) {
-            const updatedItems = result.changes.filter(c => c.type === 'updated');
-            if (updatedItems.length > 0) {
-                detailsHtml += `<div style="margin-top:6px; padding-top:4px; border-top:1px dashed rgba(0,0,0,0.15);"><strong style="color:var(--primary);">Chi tiết ghi đè thông tin:</strong><ul style="margin:2px 0 0 16px; padding:0;">`;
-                updatedItems.forEach(u => {
-                    detailsHtml += `<li><strong>${u.subject}</strong>: ${u.reason}</li>`;
-                });
-                detailsHtml += `</ul></div>`;
-            }
+        // Language
+        if (res.appLang) {
+          setLang(res.appLang);
+          state.lang = res.appLang;
         }
 
-        showSyncResult(true, `✓ Đồng bộ thành công vào lịch <strong>"${result.calendarName}"</strong>!`, detailsHtml);
-    } catch (err) {
-        console.error('[handleSyncWeek Error]', err);
-        showSyncResult(false, '✗ Đồng bộ thất bại', err.message || 'Lỗi khi giao tiếp với Google Calendar API');
-    } finally {
-        els.btnSyncWeekCalendar.disabled = false;
-        els.btnSyncWeekCalendar.textContent = origText;
-    }
-}
+        // Stored profile & verification
+        if (res.studentProfile) state.portalProfile = res.studentProfile;
+        if (res.portalVerification) state.portalVerification = res.portalVerification;
 
-function showSyncResult(isSuccess, title, detailsHtml) {
-    if (!els.syncResultBox) return;
-    els.syncResultBox.style.display = 'block';
-    els.syncResultBox.className = isSuccess ? 'sync-result-box' : 'sync-result-box error';
-    els.syncResultStatus.innerHTML = title;
-    els.syncResultDetails.innerHTML = detailsHtml;
-}
+        // Auto sync UI setup
+        const autoSyncToggle = document.getElementById('toggle_auto_sync');
+        const autoSyncSection = document.getElementById('auto_sync_config_section');
+        const selectFreq = document.getElementById('select_auto_freq');
+        const selectDay = document.getElementById('select_auto_day');
+        const inputTime = document.getElementById('input_auto_time');
+        const groupDay = document.getElementById('group_auto_day');
 
-function renderScheduleClasses(scheduleData) {
-    if (!scheduleData) return;
-    
-    const { classes, dateStr } = extractClassesFromSchedule(scheduleData, new Date());
-    els.todayDateBadge.textContent = dateStr;
+        if (autoSyncToggle) autoSyncToggle.checked = Boolean(res.autoSyncEnabled);
+        if (autoSyncSection) autoSyncSection.style.display = res.autoSyncEnabled ? 'block' : 'none';
+        if (selectFreq && res.autoSyncFreq) selectFreq.value = res.autoSyncFreq;
+        if (selectDay && res.autoSyncDay) selectDay.value = String(res.autoSyncDay);
+        if (inputTime && res.autoSyncTime) inputTime.value = res.autoSyncTime;
+        if (groupDay) groupDay.style.display = res.autoSyncFreq === 'weekly' ? 'block' : 'none';
 
-    if (!classes || classes.length === 0) {
-        els.todayAgenda.innerHTML = `
-            <p id="ui_no_classes" class="text-sm text-gray" style="margin:0;">
-                No classes scheduled for today (${dateStr}) 🎉
-            </p>
-        `;
-        return;
-    }
+        // App version tag
+        const ver = (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || '1.1.1';
+        const verTag = document.getElementById('app_version_tag');
+        if (verTag) verTag.textContent = `v${ver}`;
+      } catch (err) {
+        console.warn('Error applying stored preferences:', err);
+      }
+      resolve();
+    };
 
-    let html = '';
-    classes.forEach(c => {
-        const periodStart = Number(c.tiet_bat_dau) || 1;
-        const periodsCount = Number(c.so_tiet) || 1;
-        const periodEnd = periodStart + periodsCount - 1;
-        
-        // Approximate time
-        const periodTimes = {
-            1: '06:45', 2: '07:30', 3: '08:15',
-            4: '09:15', 5: '10:00', 6: '10:45',
-            7: '12:45', 8: '13:30', 9: '14:15',
-            10: '15:15', 11: '16:00', 12: '16:45'
-        };
-        const periodEndTimes = {
-            1: '07:30', 2: '08:15', 3: '09:00',
-            4: '10:00', 5: '10:45', 6: '11:30',
-            7: '13:30', 8: '14:15', 9: '15:00',
-            10: '16:00', 11: '16:45', 12: '17:30'
-        };
-        const startTime = periodTimes[periodStart] || `Tiết ${periodStart}`;
-        const endTime = periodEndTimes[periodEnd] || `Tiết ${periodEnd}`;
-
-        html += `
-            <div class="agenda-item">
-                <div class="agenda-title">
-                    ${c.ten_mon || 'Môn học'}
-                    <span class="tag">Tiết ${periodStart}-${periodEnd}</span>
-                    ${c.ma_phong ? `<span class="tag tag-room">${c.ma_phong}</span>` : ''}
-                </div>
-                <div class="agenda-details">
-                    ⏰ ${startTime} - ${endTime} &bull; 👤 ${c.ten_giang_vien || 'Chưa xếp GV'}
-                </div>
-            </div>
-        `;
-    });
-
-    els.todayAgenda.innerHTML = html;
-}
-
-async function handleExcelDrop(file) {
-    try {
-        els.uiDropExcel.textContent = "Parsing...";
-        const data = await parseExcel(file);
-        els.uiDropExcel.textContent = `Parsed ${data.length} rows!`;
-        window.cachedExcelData = data;
-    } catch(e) {
-        els.uiDropExcel.textContent = "Error parsing Excel";
-    }
-}
-
-function exportFullSemester() {
-    if(window.cachedExcelData) {
-        const icsString = generateICS(window.cachedExcelData);
-        const blob = new Blob([icsString], {type: 'text/calendar'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'semester.ics';
-        a.click();
+    if (typeof chrome !== 'undefined' && chrome.storage?.local?.get) {
+      try {
+        chrome.storage.local.get([
+          'appTheme', 
+          'appLang', 
+          'autoSyncEnabled', 
+          'autoSyncFreq', 
+          'autoSyncDay', 
+          'autoSyncTime',
+          'studentProfile',
+          'portalVerification'
+        ], applyData);
+      } catch (e) {
+        applyData({});
+      }
     } else {
-        alert(t('no_classes'));
+      applyData({});
     }
+  });
 }
 
-function exportMakeup() {
-    alert("Select Excel file first or verify /tkb-tuan to export makeup classes.");
+/**
+ * Intelligent Route Guards on Launch:
+ * Evaluates Google OAuth & FTU Portal tokens.
+ * Fallback to Accounts tab if either is disconnected; otherwise default to Schedule.
+ */
+async function runInitialConnectionCheck() {
+  renderConnectionIndicators('pending', 'pending');
+
+  let isGoogleOk = false;
+  let isPortalOk = false;
+
+  // 1. Check Google OAuth status
+  try {
+    const gAuth = await checkAuth();
+    if (gAuth && gAuth.token) {
+      state.googleAccount = gAuth;
+      isGoogleOk = true;
+    }
+  } catch (e) {
+    console.warn('Google check failed:', e);
+  }
+
+  // 2. Check FTU Portal status
+  try {
+    const creds = await getStoredPortalCredentials();
+    if (creds && creds.studentId && creds.password) {
+      // Pre-fill input
+      const idInp = document.getElementById('input_student_id');
+      const pwInp = document.getElementById('input_student_password');
+      if (idInp) idInp.value = creds.studentId;
+      if (pwInp) pwInp.value = creds.password;
+    }
+
+    const session = await getSessionToken(false);
+    if (session && session.success && session.token) {
+      state.portalToken = session.token;
+      state.portalProfile = session.profile || state.portalProfile;
+      isPortalOk = true;
+    }
+  } catch (e) {
+    console.warn('Portal check failed:', e);
+  }
+
+  updateAccountCardsUI(isGoogleOk, isPortalOk);
+  renderConnectionIndicators(isPortalOk ? 'ok' : 'err', isGoogleOk ? 'ok' : 'err');
+
+  // Route Guard Logic:
+  const routeBanner = document.getElementById('route_guard_banner');
+  const accountsBadge = document.getElementById('nav_accounts_badge');
+
+  if (!isGoogleOk || !isPortalOk) {
+    // Show warning banner and red badge on Accounts tab
+    if (routeBanner) routeBanner.style.display = 'flex';
+    if (accountsBadge) accountsBadge.style.display = 'block';
+
+    // Route fallback to Accounts tab
+    switchView('view_accounts');
+  } else {
+    // Happy path: Route to Schedule tab
+    if (routeBanner) routeBanner.style.display = 'none';
+    if (accountsBadge) accountsBadge.style.display = 'none';
+    switchView('view_schedule');
+    await loadScheduleData();
+  }
 }
 
-init();
+/**
+ * Loads and caches the active semester schedule from Portal REST APIs.
+ */
+async function loadScheduleData() {
+  if (!state.portalToken) return;
 
+  try {
+    // 1. Get active semester
+    state.semesterInfo = await getActiveSemesterInfo(state.portalToken);
+    const chip = document.getElementById('active_semester_chip');
+    if (chip && state.semesterInfo) {
+      chip.textContent = state.semesterInfo.ten_hoc_ky || `HK ${state.semesterInfo.hoc_ky}`;
+    }
+
+    // 2. Fetch timetable
+    state.scheduleData = await getSchedule(state.portalToken, state.semesterInfo.hoc_ky);
+    
+    // 3. Mark verification verified
+    state.portalVerification = { verified: true, verifiedAt: new Date().toISOString() };
+    chrome.storage.local.set({ portalVerification: state.portalVerification });
+
+    // Render schedule views
+    renderTodayView();
+    populateWeekSelector();
+    renderWeekView(state.selectedWeekIndex);
+    updateVerificationUI(true);
+  } catch (err) {
+    console.error('Error loading schedule data:', err);
+    updateVerificationUI(false);
+  }
+}
+
+/**
+ * Renders the Today (Day) View.
+ */
+function renderTodayView() {
+  const container = document.getElementById('today_agenda_container');
+  const emptyBox = document.getElementById('empty_today_box');
+  const todayDisp = document.getElementById('today_date_display');
+  if (!container) return;
+
+  // Format today's date in VN time
+  const now = new Date();
+  const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  const dayNamesEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const isEn = getLang() === 'en';
+  const dayName = isEn ? dayNamesEn[now.getDay()] : dayNames[now.getDay()];
+  
+  const pad = (n) => String(n).padStart(2, '0');
+  const dateFormatted = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+  if (todayDisp) todayDisp.textContent = `${dayName}, ${dateFormatted}`;
+
+  const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  // Find classes scheduled for today
+  const todayClasses = [];
+  if (state.scheduleData && state.scheduleData.ds_tuan_tkb) {
+    state.scheduleData.ds_tuan_tkb.forEach(week => {
+      (week.ds_thoi_khoa_bieu || []).forEach(item => {
+        const itemDate = (item.ngay_hoc || '').split('T')[0];
+        if (itemDate === todayIso) {
+          todayClasses.push(item);
+        }
+      });
+    });
+  }
+
+  // Sort today's classes by start period
+  todayClasses.sort((a, b) => (Number(a.tiet_bat_dau) || 0) - (Number(b.tiet_bat_dau) || 0));
+
+  container.innerHTML = '';
+  if (todayClasses.length === 0) {
+    if (emptyBox) {
+      container.appendChild(emptyBox);
+      emptyBox.style.display = 'block';
+    }
+    return;
+  }
+
+  todayClasses.forEach(item => {
+    container.appendChild(createClassCard(item));
+  });
+}
+
+/**
+ * Builds a class DOM card element with period pill, room, lecturer, and tags.
+ */
+function createClassCard(item) {
+  const card = document.createElement('div');
+  const isMakeup = Boolean(item.is_day_bu || (item.ten_mon || '').includes('Dạy bù') || (item.ghi_chu || '').includes('Dạy bù'));
+  card.className = `class-card ${isMakeup ? 'is-makeup' : ''}`;
+
+  const startP = Number(item.tiet_bat_dau) || 1;
+  const count = Number(item.so_tiet) || 1;
+  const endP = startP + count - 1;
+
+  const startT = PERIOD_TIMES[startP]?.start || '06:45';
+  const endT = PERIOD_TIMES[endP]?.end || '09:00';
+  const courseCode = item.ma_mon || extractCourseCode(item.ten_mon);
+
+  card.innerHTML = `
+    <div class="class-time-row">
+      <span class="period-pill">⚡ ${t('period')} ${startP} - ${endP}</span>
+      <span class="time-range">${startT} - ${endT}</span>
+    </div>
+    <div class="class-title">
+      ${item.ten_mon || 'Môn học'}
+      ${courseCode ? `<span class="text-xs text-muted">(${courseCode})</span>` : ''}
+    </div>
+    <div class="class-meta-row">
+      <span class="meta-pill">📍 ${item.ma_phong ? `Phòng ${item.ma_phong}` : t('room') + ': Chưa xếp'}</span>
+      <span class="meta-pill">👨‍🏫 ${item.ten_giang_vien || t('lecturer') + ': Chưa cập nhật'}</span>
+      ${isMakeup ? `<span class="tag-makeup">${t('makeup_tag')}</span>` : ''}
+    </div>
+  `;
+  return card;
+}
+
+/**
+ * Populates the Week Selector Dropdown in Week View.
+ */
+function populateWeekSelector() {
+  const select = document.getElementById('select_week_dropdown');
+  if (!select || !state.scheduleData || !state.scheduleData.ds_tuan_tkb) return;
+
+  select.innerHTML = '';
+  const weeks = state.scheduleData.ds_tuan_tkb;
+  const now = new Date();
+  let defaultIdx = 0;
+
+  weeks.forEach((week, idx) => {
+    const startStr = (week.ngay_bat_dau || '').split('T')[0];
+    const endStr = (week.ngay_ket_thuc || '').split('T')[0];
+    
+    // Check if current date falls within this week
+    if (startStr && endStr) {
+      const s = new Date(startStr);
+      const e = new Date(endStr);
+      e.setHours(23, 59, 59, 999);
+      if (now >= s && now <= e) {
+        defaultIdx = idx;
+      }
+    }
+
+    const opt = document.createElement('option');
+    opt.value = idx;
+    opt.textContent = `${week.ten_tuan || `Tuần ${idx + 1}`} [${formatDateShort(startStr)} - ${formatDateShort(endStr)}]`;
+    select.appendChild(opt);
+  });
+
+  state.selectedWeekIndex = defaultIdx;
+  select.value = defaultIdx;
+  updateWeekSubtitle(defaultIdx);
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return dateStr;
+}
+
+function updateWeekSubtitle(idx) {
+  const subtitle = document.getElementById('week_range_subtitle');
+  if (!subtitle || !state.scheduleData?.ds_tuan_tkb?.[idx]) return;
+  const w = state.scheduleData.ds_tuan_tkb[idx];
+  subtitle.textContent = `${formatDateShort(w.ngay_bat_dau?.split('T')[0])} - ${formatDateShort(w.ngay_ket_thuc?.split('T')[0])}`;
+}
+
+/**
+ * Renders Vertical Expandable Day Cards for the selected week.
+ */
+function renderWeekView(weekIndex) {
+  const container = document.getElementById('week_days_vertical_container');
+  if (!container || !state.scheduleData?.ds_tuan_tkb?.[weekIndex]) return;
+
+  container.innerHTML = '';
+  const week = state.scheduleData.ds_tuan_tkb[weekIndex];
+  const classes = week.ds_thoi_khoa_bieu || [];
+
+  // Group classes by day of week
+  const dayNames = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật'];
+  const dayNamesEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const isEn = getLang() === 'en';
+
+  // Build 7 calendar days starting from week's ngay_bat_dau
+  const startDateStr = (week.ngay_bat_dau || '').split('T')[0];
+  const startDate = startDateStr ? new Date(startDateStr) : new Date();
+
+  for (let i = 0; i < 7; i++) {
+    const curDate = new Date(startDate);
+    curDate.setDate(startDate.getDate() + i);
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${curDate.getFullYear()}-${pad(curDate.getMonth() + 1)}-${pad(curDate.getDate())}`;
+    const dateDisplay = `${pad(curDate.getDate())}/${pad(curDate.getMonth() + 1)}`;
+
+    const dayClasses = classes.filter(c => (c.ngay_hoc || '').split('T')[0] === dateStr);
+    dayClasses.sort((a, b) => (Number(a.tiet_bat_dau) || 0) - (Number(b.tiet_bat_dau) || 0));
+
+    const dayName = isEn ? dayNamesEn[i] : dayNames[i];
+
+    const accordion = document.createElement('div');
+    accordion.className = 'day-accordion';
+
+    const hasClasses = dayClasses.length > 0;
+    const badgeClass = hasClasses ? 'badge-primary' : 'badge-neutral';
+
+    accordion.innerHTML = `
+      <div class="day-accordion-header" data-day="${i}">
+        <span>${dayName} • <span class="text-muted font-medium">${dateDisplay}</span></span>
+        <span class="badge ${badgeClass}">${dayClasses.length} ${t('classes_count')}</span>
+      </div>
+      <div class="day-accordion-body" id="day_body_${i}" style="display: ${hasClasses ? 'flex' : 'none'};">
+        ${hasClasses ? '' : `<div class="text-xs text-muted" style="padding:6px;">${t('no_classes_in_week')}</div>`}
+      </div>
+    `;
+
+    const body = accordion.querySelector(`#day_body_${i}`);
+    if (hasClasses) {
+      dayClasses.forEach(c => body.appendChild(createClassCard(c)));
+    }
+
+    // Toggle on header click
+    accordion.querySelector('.day-accordion-header').onclick = () => {
+      const isVisible = body.style.display === 'flex';
+      body.style.display = isVisible ? 'none' : 'flex';
+    };
+
+    container.appendChild(accordion);
+  }
+}
+
+/**
+ * Handles Tab Navigation Switching.
+ */
+function switchView(viewId) {
+  state.activeView = viewId;
+
+  // Toggle active tab buttons
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === viewId);
+  });
+
+  // Toggle tab view containers
+  document.querySelectorAll('.tab-view').forEach(view => {
+    view.classList.toggle('active', view.id === viewId);
+  });
+}
+
+/**
+ * Updates UI labels when changing language.
+ */
+function updateI18nLabels() {
+  const current = getLang();
+  state.lang = current;
+
+  // Update all marked ui_ elements
+  document.querySelectorAll('[id^="ui_"]').forEach(el => {
+    const key = el.id.replace('ui_', '');
+    const val = t(key);
+    if (val && val !== key) {
+      el.textContent = val;
+    }
+  });
+
+  // Nav labels
+  const navSched = document.getElementById('nav_label_schedule');
+  const navSync = document.getElementById('nav_label_sync');
+  const navAcc = document.getElementById('nav_label_accounts');
+  const navSet = document.getElementById('nav_label_settings');
+
+  if (navSched) navSched.textContent = t('tab_schedule');
+  if (navSync) navSync.textContent = t('tab_sync');
+  if (navAcc) navAcc.textContent = t('tab_accounts');
+  if (navSet) navSet.textContent = t('tab_settings');
+
+  // Top header language indicator
+  const langIndicator = document.getElementById('lang_indicator');
+  if (langIndicator) {
+    langIndicator.textContent = current === 'vi' ? 'VN' : 'EN';
+  }
+  const flag = document.getElementById('lang_flag');
+  if (flag) {
+    flag.textContent = current === 'vi' ? '🇻🇳' : '🇬🇧';
+  }
+
+  // Settings toggle buttons (VN / EN)
+  const btnLangVi = document.getElementById('btn_lang_vi');
+  const btnLangEn = document.getElementById('btn_lang_en');
+  if (btnLangVi) btnLangVi.classList.toggle('active', current === 'vi');
+  if (btnLangEn) btnLangEn.classList.toggle('active', current === 'en');
+
+  // Sync Scope dropdown options
+  const optThisWeek = document.getElementById('opt_scope_this_week');
+  const optFromThisWeek = document.getElementById('opt_scope_from_this_week');
+  const optSemester = document.getElementById('opt_scope_semester');
+  if (optThisWeek) optThisWeek.textContent = t('sync_scope_this_week');
+  if (optFromThisWeek) optFromThisWeek.textContent = t('sync_scope_from_this_week');
+  if (optSemester) optSemester.textContent = t('sync_scope_semester');
+
+  // Auto-sync options
+  const optFreqDaily = document.getElementById('opt_freq_daily');
+  const optFreqWeekly = document.getElementById('opt_freq_weekly');
+  if (optFreqDaily) optFreqDaily.textContent = t('freq_daily');
+  if (optFreqWeekly) optFreqWeekly.textContent = t('freq_weekly');
+
+  // Days in auto sync selector
+  const selectAutoDay = document.getElementById('select_auto_day');
+  if (selectAutoDay) {
+    const dayNames = current === 'en'
+      ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      : ['Chủ Nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+    for (const opt of selectAutoDay.options) {
+      const dayVal = Number(opt.value);
+      if (dayNames[dayVal]) opt.textContent = dayNames[dayVal];
+    }
+  }
+
+  // Buttons & inputs
+  const btnConnectGoogle = document.getElementById('btn_connect_google');
+  const btnSwitchGoogle = document.getElementById('btn_switch_google');
+  const btnDisconnectGoogle = document.getElementById('btn_disconnect_google');
+  if (btnConnectGoogle) btnConnectGoogle.textContent = t('connect_google');
+  if (btnSwitchGoogle) btnSwitchGoogle.textContent = t('switch_account');
+  if (btnDisconnectGoogle) btnDisconnectGoogle.textContent = t('disconnect');
+
+  const btnToggleMask = document.getElementById('btn_toggle_password_mask');
+  const inputPw = document.getElementById('input_student_password');
+  if (btnToggleMask && inputPw) {
+    const isPw = inputPw.type === 'password';
+    btnToggleMask.textContent = isPw ? t('show_password') : t('hide_password');
+  }
+
+  const btnToggleCreds = document.getElementById('btn_toggle_creds_form');
+  if (btnToggleCreds) {
+    const credsForm = document.getElementById('creds_form_wrap');
+    const isShown = credsForm && credsForm.style.display !== 'none';
+    btnToggleCreds.textContent = isShown ? (current === 'vi' ? 'Ẩn' : 'Hide') : t('edit_creds');
+  }
+
+  const btnRefreshToday = document.getElementById('btn_refresh_today');
+  if (btnRefreshToday) btnRefreshToday.textContent = t('refresh_today');
+
+  const btnThemeLight = document.getElementById('btn_theme_light');
+  const btnThemeDark = document.getElementById('btn_theme_dark');
+  if (btnThemeLight) btnThemeLight.textContent = t('theme_light');
+  if (btnThemeDark) btnThemeDark.textContent = t('theme_dark');
+
+  const inputStudentId = document.getElementById('input_student_id');
+  if (inputStudentId) inputStudentId.placeholder = t('student_id_placeholder');
+  if (inputPw) inputPw.placeholder = t('password_placeholder');
+
+  // Active Semester Chip
+  const semChip = document.getElementById('active_semester_chip');
+  if (semChip) {
+    const semCode = state.semesterInfo?.ma_hoc_ky || '20261';
+    semChip.textContent = current === 'en' ? `Sem ${semCode}` : `HK ${semCode}`;
+  }
+
+  // Update account cards and badges
+  updateAccountCardsUI(Boolean(state.googleAccount), Boolean(state.portalProfile));
+  if (state.portalVerification !== null) {
+    updateVerificationUI(state.portalVerification);
+  }
+
+  // Refresh schedule text
+  renderTodayView();
+  if (state.scheduleData) {
+    renderWeekView(state.selectedWeekIndex);
+  }
+}
+
+/**
+ * Sets Light or Dark theme.
+ */
+function setTheme(theme) {
+  state.theme = theme;
+  document.body.className = `theme-${theme}`;
+  chrome.storage.local.set({ appTheme: theme });
+
+  const icon = document.getElementById('theme_icon');
+  if (icon) icon.textContent = theme === 'dark' ? '☀️' : '🌓';
+
+  const btnLight = document.getElementById('btn_theme_light');
+  const btnDark = document.getElementById('btn_theme_dark');
+  if (btnLight) btnLight.classList.toggle('active', theme === 'light');
+  if (btnDark) btnDark.classList.toggle('active', theme === 'dark');
+}
+
+/**
+ * Binds all user interactions and listeners.
+ */
+function bindUIEvents() {
+  // Bottom Nav
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.onclick = () => switchView(btn.dataset.view);
+  });
+
+  // Theme & Lang Quick Buttons
+  const btnLang = document.getElementById('btn_toggle_lang');
+  if (btnLang) {
+    btnLang.onclick = () => {
+      const nextLang = getLang() === 'vi' ? 'en' : 'vi';
+      setLang(nextLang);
+      updateI18nLabels();
+    };
+  }
+
+  const btnTheme = document.getElementById('btn_toggle_theme');
+  if (btnTheme) {
+    btnTheme.onclick = () => {
+      setTheme(state.theme === 'dark' ? 'light' : 'dark');
+    };
+  }
+
+  // Segmented Control (Day vs Week)
+  const btnDay = document.getElementById('btn_view_day');
+  const btnWeek = document.getElementById('btn_view_week');
+  const subDay = document.getElementById('subview_day');
+  const subWeek = document.getElementById('subview_week');
+
+  if (btnDay && btnWeek) {
+    btnDay.onclick = () => {
+      btnDay.classList.add('active');
+      btnWeek.classList.remove('active');
+      if (subDay) subDay.style.display = 'block';
+      if (subWeek) subWeek.style.display = 'none';
+      state.scheduleSubView = 'day';
+    };
+
+    btnWeek.onclick = () => {
+      btnWeek.classList.add('active');
+      btnDay.classList.remove('active');
+      if (subDay) subDay.style.display = 'none';
+      if (subWeek) subWeek.style.display = 'block';
+      state.scheduleSubView = 'week';
+    };
+  }
+
+  // Refresh Today button
+  const btnRefreshToday = document.getElementById('btn_refresh_today');
+  if (btnRefreshToday) {
+    btnRefreshToday.onclick = async () => {
+      btnRefreshToday.textContent = 'Đang tải...';
+      await loadScheduleData();
+      btnRefreshToday.textContent = '🔄 Làm mới';
+    };
+  }
+
+  // Week Selector Dropdown
+  const weekSelect = document.getElementById('select_week_dropdown');
+  if (weekSelect) {
+    weekSelect.onchange = (e) => {
+      const idx = parseInt(e.target.value, 10);
+      state.selectedWeekIndex = idx;
+      updateWeekSubtitle(idx);
+      renderWeekView(idx);
+    };
+  }
+
+  // Expand / Collapse all days
+  const btnExpandAll = document.getElementById('btn_expand_all_days');
+  const btnCollapseAll = document.getElementById('btn_collapse_all_days');
+  if (btnExpandAll) {
+    btnExpandAll.onclick = () => {
+      document.querySelectorAll('.day-accordion-body').forEach(b => b.style.display = 'flex');
+    };
+  }
+  if (btnCollapseAll) {
+    btnCollapseAll.onclick = () => {
+      document.querySelectorAll('.day-accordion-body').forEach(b => b.style.display = 'none');
+    };
+  }
+
+  // Start Sync Action
+  const btnStartSync = document.getElementById('btn_start_sync_action');
+  if (btnStartSync) {
+    btnStartSync.onclick = handleStartSync;
+  }
+
+  // Deduplication Cleaner Action (Fixes image.png duplicates!)
+  const btnCleanDuplicates = document.getElementById('btn_clean_duplicates_action');
+  if (btnCleanDuplicates) {
+    btnCleanDuplicates.onclick = handleCleanDuplicates;
+  }
+
+  // Auto-sync controls
+  const toggleAutoSync = document.getElementById('toggle_auto_sync');
+  const autoSyncSection = document.getElementById('auto_sync_config_section');
+  const selectAutoFreq = document.getElementById('select_auto_freq');
+  const groupAutoDay = document.getElementById('group_auto_day');
+  const btnSaveAutoSync = document.getElementById('btn_save_auto_sync');
+
+  if (toggleAutoSync) {
+    toggleAutoSync.onchange = () => {
+      if (autoSyncSection) autoSyncSection.style.display = toggleAutoSync.checked ? 'block' : 'none';
+    };
+  }
+
+  if (selectAutoFreq) {
+    selectAutoFreq.onchange = () => {
+      if (groupAutoDay) groupAutoDay.style.display = selectAutoFreq.value === 'weekly' ? 'block' : 'none';
+    };
+  }
+
+  if (btnSaveAutoSync) {
+    btnSaveAutoSync.onclick = handleSaveAutoSync;
+  }
+
+  // Google Account Connect / Switch / Disconnect
+  const btnConnectGoogle = document.getElementById('btn_connect_google');
+  const btnSwitchGoogle = document.getElementById('btn_switch_google');
+  const btnDisconnectGoogle = document.getElementById('btn_disconnect_google');
+
+  if (btnConnectGoogle) {
+    btnConnectGoogle.onclick = async () => {
+      try {
+        btnConnectGoogle.textContent = 'Connecting...';
+        const acc = await authorizeGoogle();
+        state.googleAccount = acc;
+        updateAccountCardsUI(true, Boolean(state.portalToken));
+        renderConnectionIndicators(state.portalToken ? 'ok' : 'err', 'ok');
+      } catch (err) {
+        alert(err.message || 'Google authorization failed');
+      } finally {
+        btnConnectGoogle.textContent = t('connect_google');
+      }
+    };
+  }
+
+  if (btnSwitchGoogle) {
+    btnSwitchGoogle.onclick = async () => {
+      await logoutGoogle();
+      const acc = await authorizeGoogle();
+      state.googleAccount = acc;
+      updateAccountCardsUI(true, Boolean(state.portalToken));
+    };
+  }
+
+  if (btnDisconnectGoogle) {
+    btnDisconnectGoogle.onclick = async () => {
+      await logoutGoogle();
+      state.googleAccount = null;
+      updateAccountCardsUI(false, Boolean(state.portalToken));
+      renderConnectionIndicators(state.portalToken ? 'ok' : 'err', 'err');
+    };
+  }
+
+  // Portal Credentials Drawer & Password Mask Toggle
+  const btnToggleCreds = document.getElementById('btn_toggle_creds_form');
+  const credsWrap = document.getElementById('creds_form_wrap');
+  if (btnToggleCreds && credsWrap) {
+    btnToggleCreds.onclick = () => {
+      const isHidden = credsWrap.style.display === 'none';
+      credsWrap.style.display = isHidden ? 'flex' : 'none';
+      btnToggleCreds.textContent = isHidden ? 'Thu gọn' : 'Chỉnh sửa';
+    };
+  }
+
+  const btnToggleMask = document.getElementById('btn_toggle_password_mask');
+  const inputPw = document.getElementById('input_student_password');
+  if (btnToggleMask && inputPw) {
+    btnToggleMask.onclick = () => {
+      const isPw = inputPw.type === 'password';
+      inputPw.type = isPw ? 'text' : 'password';
+      btnToggleMask.textContent = isPw ? t('hide_password') : t('show_password');
+    };
+  }
+
+  // Save Portal Credentials
+  const btnSaveCreds = document.getElementById('btn_save_portal_creds');
+  if (btnSaveCreds) {
+    btnSaveCreds.onclick = handleSavePortalCreds;
+  }
+
+  // Diagnostics Pings
+  const btnDiagSem = document.getElementById('btn_diag_sem');
+  const btnDiagWeek = document.getElementById('btn_diag_week');
+  if (btnDiagSem) btnDiagSem.onclick = () => handleDiagPing('sem');
+  if (btnDiagWeek) btnDiagWeek.onclick = () => handleDiagPing('week');
+
+  // Settings Theme & Lang Buttons
+  const btnThemeLight = document.getElementById('btn_theme_light');
+  const btnThemeDark = document.getElementById('btn_theme_dark');
+  if (btnThemeLight) btnThemeLight.onclick = () => setTheme('light');
+  if (btnThemeDark) btnThemeDark.onclick = () => setTheme('dark');
+
+  const btnLangVi = document.getElementById('btn_lang_vi');
+  const btnLangEn = document.getElementById('btn_lang_en');
+  if (btnLangVi) {
+    btnLangVi.onclick = () => {
+      setLang('vi');
+      updateI18nLabels();
+      btnLangVi.classList.add('active');
+      btnLangEn.classList.remove('active');
+    };
+  }
+  if (btnLangEn) {
+    btnLangEn.onclick = () => {
+      setLang('en');
+      updateI18nLabels();
+      btnLangEn.classList.add('active');
+      btnLangVi.classList.remove('active');
+    };
+  }
+
+  // Offline ICS Export & Excel Drop Zone
+  const btnExpSem = document.getElementById('btn_export_semester_ics');
+  const btnExpMakeup = document.getElementById('btn_export_makeup_ics');
+  const dropZone = document.getElementById('excel_drop_zone');
+  const fileInput = document.getElementById('file_excel_input');
+
+  if (btnExpSem) btnExpSem.onclick = handleExportSemesterICS;
+  if (btnExpMakeup) btnExpMakeup.onclick = handleExportMakeupICS;
+
+  if (dropZone && fileInput) {
+    dropZone.onclick = () => fileInput.click();
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = 'var(--primary)'; };
+    dropZone.ondragleave = () => { dropZone.style.borderColor = 'var(--border-subtle)'; };
+    dropZone.ondrop = async (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = 'var(--border-subtle)';
+      if (e.dataTransfer.files.length > 0) {
+        await handleExcelFile(e.dataTransfer.files[0]);
+      }
+    };
+    fileInput.onchange = async () => {
+      if (fileInput.files.length > 0) {
+        await handleExcelFile(fileInput.files[0]);
+      }
+    };
+  }
+}
+
+/**
+ * Handles Start Synchronization with Pre-Insert Deduplication.
+ */
+async function handleStartSync() {
+  if (!state.googleAccount?.token) {
+    alert('Vui lòng kết nối tài khoản Google trước khi đồng bộ!');
+    switchView('view_accounts');
+    return;
+  }
+
+  if (!state.scheduleData || !state.scheduleData.ds_tuan_tkb) {
+    alert('Không tìm thấy dữ liệu thời khóa biểu để đồng bộ. Vui lòng kiểm tra kết nối Cổng Đào Tạo!');
+    switchView('view_accounts');
+    return;
+  }
+
+  const scopeSelect = document.getElementById('select_sync_scope');
+  const scope = scopeSelect ? scopeSelect.value : 'this_week';
+
+  const statusBox = document.getElementById('sync_status_box');
+  const progressBar = document.getElementById('sync_progress_bar');
+  const statusHeader = document.getElementById('sync_status_header');
+  const logBox = document.getElementById('sync_details_log');
+  const btn = document.getElementById('btn_start_sync_action');
+
+  if (statusBox) statusBox.style.display = 'block';
+  if (progressBar) progressBar.style.width = '30%';
+  if (statusHeader) statusHeader.textContent = t('syncing_in_progress');
+  if (btn) btn.disabled = true;
+
+  try {
+    const result = await syncScheduleToGoogleCalendar(
+      state.googleAccount.token,
+      state.scheduleData,
+      {
+        scope,
+        activeWeekIndex: state.selectedWeekIndex
+      }
+    );
+
+    if (progressBar) progressBar.style.width = '100%';
+    if (statusHeader) statusHeader.textContent = t('sync_success');
+
+    // Update stats
+    const elIns = document.getElementById('stat_inserted');
+    const elUpd = document.getElementById('stat_updated');
+    const elSkip = document.getElementById('stat_skipped');
+    const elClash = document.getElementById('stat_clashes');
+
+    if (elIns) elIns.textContent = result.insertedCount;
+    if (elUpd) elUpd.textContent = result.updatedCount;
+    if (elSkip) elSkip.textContent = result.skippedCount;
+    if (elClash) elClash.textContent = result.clashesCount;
+
+    // Detailed log
+    if (logBox) {
+      if (result.changes && result.changes.length > 0) {
+        logBox.innerHTML = result.changes.slice(0, 10).map(c => `
+          <div>• [${c.type.toUpperCase()}] ${c.subject} (${c.room || 'Phòng'}) ${c.reason || ''}</div>
+        `).join('');
+      } else {
+        logBox.innerHTML = `<div>✓ Đã kiểm tra ${result.total} tiết học. Tất cả đã đồng bộ chính xác, không cần chèn trùng lặp.</div>`;
+      }
+    }
+  } catch (err) {
+    if (statusHeader) statusHeader.textContent = `Lỗi đồng bộ: ${err.message}`;
+    console.error('Sync error:', err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/**
+ * Handles cleaning existing duplicate calendar events (Directly fixes image.png issue!).
+ */
+async function handleCleanDuplicates() {
+  if (!state.googleAccount?.token) {
+    alert('Vui lòng kết nối tài khoản Google trước!');
+    return;
+  }
+
+  const resultBox = document.getElementById('dedup_result_box');
+  const btn = document.getElementById('btn_clean_duplicates_action');
+
+  if (resultBox) {
+    resultBox.style.display = 'block';
+    resultBox.textContent = t('dedup_scanning');
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await cleanCalendarDuplicates(state.googleAccount.token);
+    if (resultBox) {
+      resultBox.innerHTML = `✓ ${t('dedup_complete')}<br>Đã quét: <strong>${res.scannedCount}</strong> sự kiện • Đã xóa trùng lặp: <strong class="text-red">${res.removedCount}</strong> sự kiện dư thừa.`;
+    }
+  } catch (err) {
+    if (resultBox) resultBox.textContent = `Lỗi dọn trùng lặp: ${err.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/**
+ * Saves Automated Background Sync preferences.
+ */
+async function handleSaveAutoSync() {
+  const toggle = document.getElementById('toggle_auto_sync');
+  const selectFreq = document.getElementById('select_auto_freq');
+  const selectDay = document.getElementById('select_auto_day');
+  const inputTime = document.getElementById('input_auto_time');
+  const statusLabel = document.getElementById('auto_sync_status_label');
+
+  const config = {
+    autoSyncEnabled: toggle ? toggle.checked : false,
+    autoSyncFreq: selectFreq ? selectFreq.value : 'daily',
+    autoSyncDay: selectDay ? Number(selectDay.value) : 1,
+    autoSyncTime: inputTime ? inputTime.value : '06:00'
+  };
+
+  chrome.storage.local.set(config, () => {
+    // Notify background worker to reschedule alarm
+    chrome.runtime.sendMessage({ action: 'RESCHEDULE_AUTO_SYNC' }, (res) => {
+      if (statusLabel) {
+        statusLabel.textContent = `✓ ${t('auto_sync_saved')} (${config.autoSyncTime}, ${config.autoSyncFreq})`;
+        setTimeout(() => { statusLabel.textContent = ''; }, 3000);
+      }
+    });
+  });
+}
+
+/**
+ * Saves Student Portal credentials and tests live login.
+ */
+async function handleSavePortalCreds() {
+  const studentId = document.getElementById('input_student_id')?.value.trim();
+  const password = document.getElementById('input_student_password')?.value.trim();
+  const btn = document.getElementById('btn_save_portal_creds');
+
+  if (!studentId || !password) {
+    alert(t('enter_credentials_msg') || 'Vui lòng nhập Mã sinh viên và Mật khẩu!');
+    return;
+  }
+
+  if (btn) btn.textContent = 'Đang xác thực...';
+
+  try {
+    await savePortalCredentials(studentId, password);
+    const loginRes = await portalLogin(studentId, password);
+    
+    state.portalToken = loginRes.token;
+    state.portalProfile = loginRes.profile;
+
+    updateAccountCardsUI(Boolean(state.googleAccount), true);
+    renderConnectionIndicators('ok', state.googleAccount ? 'ok' : 'err');
+
+    // Automatically load schedule
+    await loadScheduleData();
+
+    // Check if route banner can be hidden
+    if (state.googleAccount) {
+      const banner = document.getElementById('route_guard_banner');
+      const badge = document.getElementById('nav_accounts_badge');
+      if (banner) banner.style.display = 'none';
+      if (badge) badge.style.display = 'none';
+      switchView('view_schedule');
+    }
+
+    alert('Xác thực Cổng Đào Tạo FTU thành công!');
+  } catch (err) {
+    alert(`Xác thực thất bại: ${err.message}`);
+  } finally {
+    if (btn) btn.textContent = t('btn_save_creds');
+  }
+}
+
+/**
+ * Live Portal Diagnostics Ping for /tkb-hocky or /tkb-tuan.
+ */
+async function handleDiagPing(type) {
+  const out = document.getElementById('diag_result_output');
+  const semStatus = document.getElementById('diag_sem_status');
+  const weekStatus = document.getElementById('diag_week_status');
+
+  if (out) out.style.display = 'block';
+
+  const t0 = performance.now();
+  if (type === 'sem') {
+    if (semStatus) semStatus.textContent = '⏳';
+    try {
+      const session = await getSessionToken(true);
+      const sem = await getActiveSemesterInfo(session.token);
+      const latency = Math.round(performance.now() - t0);
+      if (semStatus) semStatus.textContent = '✓ 200';
+      if (out) out.textContent = `[GET /tkb-hocky] OK (${latency}ms)\nHọc kỳ hoạt động: ${sem.ten_hoc_ky || sem.hoc_ky}`;
+    } catch (e) {
+      if (semStatus) semStatus.textContent = '✗ ERR';
+      if (out) out.textContent = `[GET /tkb-hocky] Failed: ${e.message}`;
+    }
+  } else {
+    if (weekStatus) weekStatus.textContent = '⏳';
+    try {
+      const session = await getSessionToken(true);
+      const v = await verifyPortalAccess(session.token);
+      const latency = Math.round(performance.now() - t0);
+      if (weekStatus) weekStatus.textContent = '✓ 200';
+      if (out) out.textContent = `[GET /tkb-tuan] OK (${latency}ms)\nTìm thấy ${v.count} tuần học trực tiếp từ API qldt.hcmc.ftu.edu.vn`;
+    } catch (e) {
+      if (weekStatus) weekStatus.textContent = '✗ ERR';
+      if (out) out.textContent = `[GET /tkb-tuan] Failed: ${e.message}`;
+    }
+  }
+}
+
+/**
+ * Offline ICS Full Semester Export.
+ */
+function handleExportSemesterICS() {
+  if (!state.scheduleData || !state.scheduleData.ds_tuan_tkb) {
+    alert('Chưa có dữ liệu thời khóa biểu để xuất ICS!');
+    return;
+  }
+  const events = convertPortalScheduleToEvents(state.scheduleData);
+  const ics = generateICS(events);
+  const semName = state.semesterInfo?.hoc_ky || 'semester';
+  downloadICS(ics, `FTU_TKB_${semName}.ics`);
+}
+
+/**
+ * Offline ICS Makeup Classes Export (isolates "Dạy bù").
+ */
+function handleExportMakeupICS() {
+  if (!state.scheduleData || !state.scheduleData.ds_tuan_tkb) {
+    alert('Chưa có dữ liệu thời khóa biểu để xuất ICS!');
+    return;
+  }
+  const events = convertPortalScheduleToEvents(state.scheduleData);
+  const ics = generateMakeupICS(events);
+  downloadICS(ics, 'makeup_classes.ics');
+}
+
+/**
+ * Parses uploaded Excel schedule file.
+ */
+async function handleExcelFile(file) {
+  try {
+    const events = await parseExcel(file);
+    const ics = generateICS(events);
+    downloadICS(ics, `${file.name.replace(/\.[^/.]+$/, "")}.ics`);
+    alert(`Đã đọc thành công ${events.length} môn học từ file Excel và xuất file .ics!`);
+  } catch (err) {
+    alert(`Lỗi đọc file Excel: ${err.message}`);
+  }
+}
+
+/**
+ * Updates Account card elements based on state.
+ */
+function updateAccountCardsUI(isGoogleOk, isPortalOk) {
+  // Google Card
+  const gBadge = document.getElementById('badge_google_status');
+  const gEmail = document.getElementById('google_account_email');
+  const gName = document.getElementById('google_account_name');
+  const btnConnG = document.getElementById('btn_connect_google');
+  const btnSwitchG = document.getElementById('btn_switch_google');
+  const btnDiscG = document.getElementById('btn_disconnect_google');
+
+  if (isGoogleOk && state.googleAccount) {
+    if (gBadge) { gBadge.className = 'badge badge-success'; gBadge.textContent = t('google_authorized'); }
+    if (gEmail) gEmail.textContent = state.googleAccount.email || 'Google Account';
+    if (gName) gName.textContent = state.googleAccount.name || '';
+    if (btnConnG) btnConnG.style.display = 'none';
+    if (btnSwitchG) btnSwitchG.style.display = 'inline-block';
+    if (btnDiscG) btnDiscG.style.display = 'inline-block';
+  } else {
+    if (gBadge) { gBadge.className = 'badge badge-amber'; gBadge.textContent = t('google_not_authorized'); }
+    if (gEmail) gEmail.textContent = t('disconnected');
+    if (gName) gName.textContent = '';
+    if (btnConnG) btnConnG.style.display = 'inline-block';
+    if (btnSwitchG) btnSwitchG.style.display = 'none';
+    if (btnDiscG) btnDiscG.style.display = 'none';
+  }
+
+  // Portal Card
+  const pBadge = document.getElementById('badge_portal_status');
+  const pName = document.getElementById('portal_student_name_display');
+  const pSub = document.getElementById('portal_student_subdetails');
+  const dId = document.getElementById('disp_student_id');
+  const dEmail = document.getElementById('disp_student_email');
+
+  if (isPortalOk && state.portalProfile) {
+    if (pBadge) { pBadge.className = 'badge badge-success'; pBadge.textContent = t('portal_verified'); }
+    if (pName) pName.textContent = state.portalProfile.name || (getLang() === 'en' ? 'FTU Student' : 'Sinh viên FTU');
+    if (pSub) pSub.style.display = 'block';
+    if (dId) dId.textContent = state.portalProfile.studentId || '';
+    if (dEmail) dEmail.textContent = state.portalProfile.email || '';
+  } else {
+    if (pBadge) { pBadge.className = 'badge badge-red'; pBadge.textContent = t('portal_expired'); }
+    if (pName) pName.textContent = t('portal_not_configured');
+    if (pSub) pSub.style.display = 'none';
+  }
+}
+
+function updateVerificationUI(isVerified) {
+  const badge = document.getElementById('badge_tkb_verify');
+  const icon = document.getElementById('tkb_icon');
+  if (badge) {
+    badge.className = isVerified ? 'badge badge-success ml-auto' : 'badge badge-red ml-auto';
+    badge.textContent = isVerified ? t('tkb_verified_badge') : t('tkb_unverified_badge');
+  }
+  if (icon) icon.textContent = isVerified ? '✓' : '✗';
+}
+
+function renderConnectionIndicators(portalStatus, googleStatus) {
+  const pDot = document.getElementById('header_portal_indicator');
+  const gDot = document.getElementById('header_google_indicator');
+
+  if (pDot) {
+    pDot.className = `status-dot ${portalStatus === 'ok' ? 'dot-green' : portalStatus === 'err' ? 'dot-red' : 'dot-amber'}`;
+  }
+  if (gDot) {
+    gDot.className = `status-dot ${googleStatus === 'ok' ? 'dot-green' : googleStatus === 'err' ? 'dot-red' : 'dot-amber'}`;
+  }
+}

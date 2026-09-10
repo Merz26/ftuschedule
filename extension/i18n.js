@@ -1,100 +1,316 @@
 export const dict = {
   en: {
+    top_title: "FTU Schedule Sync",
     title: "FTU Schedule Sync",
-    portal_status: "Portal Session",
-    google_status: "Google Calendar",
-    connected: "Connected",
-    disconnected: "Disconnected",
-    not_authorized: "Not Authorized",
-    session_expired: "Session Expired",
-    run_diagnostic: "Run Diagnostic Test",
-    today_classes: "Today's Classes",
-    no_classes: "No classes today! 🎉",
-    disconnect: "Disconnect / Sign Out",
-    connect_google: "Connect Google Account",
-    portal_credentials: "Portal Credentials",
-    student_id: "Student ID",
-    password: "Password",
-    save: "Save",
-    manual_tools: "Manual Tools & ICS Export",
-    export_semester: "Export Full Semester (.ics)",
-    export_makeup: "Export Makeup Classes (.ics)",
-    drop_excel: "Drop Export_TKB.xlsx here",
+    version: "Version",
+    client_side_badge: "100% Client-Side • No Third-Party Server",
+    
+    // Bottom Nav
+    tab_schedule: "Schedule",
+    tab_sync: "Sync",
+    tab_accounts: "Accounts",
+    tab_settings: "Settings",
+
+    // Route guard & alerts
+    alert_title: "Account Connection Required",
+    alert_desc: "Please connect your Google Calendar and FTU Student Portal to start schedule synchronization.",
+    route_guard_alert: "Authentication Required: Please connect your Google Calendar and FTU Student Portal to enable automatic schedule synchronization.",
+    
+    // Schedule Tab
+    schedule_title: "Class Timetable",
+    view_day: "Today",
+    view_week: "Week",
+    today_badge: "Today",
+    refresh_today: "🔄 Refresh",
+    no_classes_today: "No classes today! 🎉",
+    select_week: "Select Week",
+    loading_weeks: "Loading weeks list...",
+    expand_all: "Expand All",
+    collapse_all: "Collapse All",
+    classes_count: "classes",
+    class_count_single: "class",
+    period: "Period",
     shift: "Period",
     room: "Room",
+    room_unassigned: "TBA",
+    room_prefix: "Room",
     lecturer: "Lecturer",
-    account_menu: "Confirmed Accounts",
+    lecturer_unassigned: "TBA",
+    makeup_tag: "Makeup",
+    clash_tag: "Overlap",
+    no_classes_in_week: "No classes scheduled for this week.",
+    course_fallback: "Course",
+
+    // Sync Tab
+    sync_title: "Calendar Synchronization",
+    sync_desc: "Automatically checks for clashes and updates classroom info when changes occur on the Portal.",
+    target_calendar_label: "Target Google Calendar",
+    target_calendar_name: "FTU Schedule (Google Calendar)",
+    sync_scope_label: "Synchronization Scope",
+    sync_scope_this_week: "Sync this week (Active 7 days)",
+    sync_scope_from_this_week: "Sync from this week to end of semester",
+    sync_scope_semester: "Sync entire semester schedule",
+    btn_start_sync: "Start Synchronization",
+    syncing_in_progress: "Synchronizing with Google Calendar...",
+    sync_success: "Synchronization complete!",
+    stat_inserted: "Inserted",
+    stat_updated: "Updated",
+    stat_skipped: "Skipped",
+    stat_clashes: "Clashes",
+    sync_stat_inserted: "Inserted",
+    sync_stat_updated: "Updated (Room/Details)",
+    sync_stat_skipped: "Skipped (Duplicate prevented)",
+    sync_stat_clashes: "Clashes detected",
+
+    // Deduplication cleaner
+    dedup_title: "Clean Duplicate Events",
+    dedup_desc: "Detect and merge/remove duplicate or overlapping class events in Google Calendar from previous imports.",
+    btn_clean_duplicates: "🧹 Scan & Clean Duplicates",
+    dedup_scanning: "Scanning calendar for duplicates...",
+    dedup_complete: "Duplicate cleanup complete!",
+
+    // Automatic Sync
+    auto_sync_title: "Automated Background Sync",
+    auto_sync_desc: "Periodically check for room updates and schedule revisions without opening the extension.",
+    auto_sync_enable: "Enable background auto-sync",
+    auto_sync_freq: "Frequency",
+    freq_daily: "Daily",
+    freq_weekly: "Weekly",
+    day_of_week: "Day of Week",
+    sync_time_label: "Execution Time",
+    btn_save_auto_sync: "Save Sync Schedule",
+    auto_sync_saved: "Background sync schedule saved!",
+
+    // Accounts Tab
+    accounts_title: "Account Connections",
     google_account: "Google Account",
-    portal_account: "FTU Student Profile",
-    student_name: "Name",
-    student_email: "FTU Email",
-    student_role: "Role",
-    tkb_tuan_status: "Weekly Schedule (/tkb-tuan)",
-    tkb_tuan_verified: "✓ /tkb-tuan Verified",
-    tkb_tuan_failed: "✗ /tkb-tuan Inaccessible",
+    google_desc: "Required to insert events into your Google Calendar.",
+    connect_google: "Connect Google Account",
     switch_account: "Switch Account",
-    toggle_details: "Account Details",
-    verify_now: "Verify /tkb-tuan",
-    sync_now: "Sync Schedule Now",
-    sync_week_title: "Sync Week to Google Calendar",
-    label_select_week: "Select Week to Sync",
-    btn_sync_week: "📅 Sync Week to \"FTU Schedule\"",
-    enter_credentials_msg: "Please enter Student ID and Password in Portal Credentials section"
+    disconnect: "Disconnect",
+    google_not_authorized: "Not Connected",
+    google_authorized: "Connected",
+    disconnected: "Not Connected",
+    
+    portal_account: "FTU Student Portal",
+    portal_desc: "Connects directly to qldt.hcmc.ftu.edu.vn private APIs.",
+    portal_credentials: "Portal Credentials",
+    edit_creds: "Edit",
+    student_id: "Student ID",
+    student_id_placeholder: "e.g. 2415115057",
+    password: "Password",
+    password_placeholder: "Enter portal password",
+    show_password: "Show",
+    hide_password: "Hide",
+    btn_save_creds: "Save & Verify Connection",
+    portal_verified: "✓ Connected & Verified",
+    portal_expired: "Session Expired",
+    portal_not_configured: "Credentials Required",
+
+    tkb_verification_title: "Schedule API Verification",
+    tkb_verified_desc: "Successfully loaded schedule data directly from portal REST APIs.",
+    tkb_unverified_desc: "Connection pending verification against /tkb-tuan endpoint.",
+    tkb_verified_badge: "✓ Verified",
+    tkb_unverified_badge: "✗ Unverified",
+    tkb_pending_badge: "Pending",
+    verify_now: "Verify /tkb-tuan Now",
+
+    diagnostics_title: "Live Portal Connection Diagnostics",
+    diag_desc: "Check actual responses from the Portal's private REST API endpoints:",
+    diag_sem_btn: "Test /tkb-hocky (Semester)",
+    diag_week_btn: "Test /tkb-tuan (Timetable)",
+    diag_testing: "Testing...",
+    diag_passed: "OK",
+    diag_failed: "Failed",
+
+    // Settings Tab
+    settings_title: "Preferences & Offline Tools",
+    appearance_title: "Appearance",
+    theme_label: "Theme",
+    theme_light: "Light",
+    theme_dark: "Dark",
+    language_label: "Language",
+    lang_vi: "VN",
+    lang_en: "EN",
+
+    offline_tools_title: "Offline Toolkit & Manual Fallback",
+    offline_tools_desc: "Export standard RFC 5545 .ics calendar files or import university Excel export files directly without third-party servers.",
+    export_semester_ics: "Export Semester (.ics)",
+    export_makeup_ics: "Export Makeup (.ics)",
+    drop_excel: "Drop Export_TKB.xlsx here or click to browse",
+    excel_imported: "Excel schedule parsed successfully!",
+
+    about_title: "About & Privacy",
+    privacy_notice: "This extension operates 100% on your device. Your student credentials and schedule tokens are stored exclusively in your local browser and never transmitted to any external third-party server."
   },
+
   vi: {
+    top_title: "FTU Schedule Sync",
     title: "Đồng bộ TKB FTU",
-    portal_status: "Phiên đăng nhập Cổng",
-    google_status: "Google Calendar",
-    connected: "Đã kết nối",
-    disconnected: "Ngắt kết nối",
-    not_authorized: "Chưa xác thực",
-    session_expired: "Hết hạn phiên",
-    run_diagnostic: "Chạy chẩn đoán",
-    today_classes: "Lớp học hôm nay",
-    no_classes: "Hôm nay không có tiết! 🎉",
-    disconnect: "Ngắt kết nối / Đăng xuất",
-    connect_google: "Kết nối tài khoản Google",
-    portal_credentials: "Thông tin Cổng Đào Tạo",
-    student_id: "Mã sinh viên",
-    password: "Mật khẩu",
-    save: "Lưu",
-    manual_tools: "Công cụ thủ công & Xuất ICS",
-    export_semester: "Xuất TKB cả kỳ (.ics)",
-    export_makeup: "Xuất TKB học bù (.ics)",
-    drop_excel: "Kéo thả Export_TKB.xlsx vào đây",
+    version: "Phiên bản",
+    client_side_badge: "100% Phía Client • Không Máy Chủ Trung Gian",
+    
+    // Bottom Nav
+    tab_schedule: "Lịch học",
+    tab_sync: "Đồng bộ",
+    tab_accounts: "Tài khoản",
+    tab_settings: "Cài đặt",
+
+    // Route guard & alerts
+    alert_title: "Cần kết nối tài khoản",
+    alert_desc: "Vui lòng kết nối Google Calendar và Cổng Đào Tạo FTU để bắt đầu đồng bộ thời khóa biểu.",
+    route_guard_alert: "Yêu cầu kết nối: Vui lòng kết nối Google Calendar và Cổng Đào Tạo FTU để bắt đầu đồng bộ thời khóa biểu.",
+
+    // Schedule Tab
+    schedule_title: "Thời khóa biểu",
+    view_day: "Hôm nay",
+    view_week: "Tuần",
+    today_badge: "Hôm nay",
+    refresh_today: "🔄 Làm mới",
+    no_classes_today: "Hôm nay không có tiết học nào! 🎉",
+    select_week: "Chọn tuần học",
+    loading_weeks: "Đang tải danh sách tuần...",
+    expand_all: "Mở tất cả",
+    collapse_all: "Thu gọn",
+    classes_count: "tiết",
+    class_count_single: "tiết",
+    period: "Tiết",
     shift: "Tiết",
     room: "Phòng",
+    room_unassigned: "Chưa xếp",
+    room_prefix: "Phòng",
     lecturer: "Giảng viên",
-    account_menu: "Xác nhận Tài khoản",
+    lecturer_unassigned: "Chưa cập nhật",
+    makeup_tag: "Dạy bù",
+    clash_tag: "Trùng lịch",
+    no_classes_in_week: "Tuần này không có lịch học.",
+    course_fallback: "Môn học",
+
+    // Sync Tab
+    sync_title: "Đồng bộ Lịch Google",
+    sync_desc: "Hệ thống tự động kiểm tra trùng lặp và cập nhật phòng học khi có thay đổi từ Cổng Đào Tạo.",
+    target_calendar_label: "Lịch Google Calendar đích",
+    target_calendar_name: "FTU Schedule (Google Calendar)",
+    sync_scope_label: "Phạm vi đồng bộ",
+    sync_scope_this_week: "Đồng bộ tuần này (7 ngày hiện tại)",
+    sync_scope_from_this_week: "Đồng bộ từ tuần này đến hết học kỳ",
+    sync_scope_semester: "Đồng bộ cả học kỳ",
+    btn_start_sync: "Bắt đầu Đồng bộ",
+    syncing_in_progress: "Đang đồng bộ với Google Calendar...",
+    sync_success: "Đồng bộ hoàn tất thành công!",
+    stat_inserted: "Đã thêm",
+    stat_updated: "Cập nhật",
+    stat_skipped: "Bỏ qua",
+    stat_clashes: "Trùng lịch",
+    sync_stat_inserted: "Đã thêm mới",
+    sync_stat_updated: "Đã cập nhật (phòng/thông tin)",
+    sync_stat_skipped: "Bỏ qua (ngừa trùng lặp)",
+    sync_stat_clashes: "Trùng lịch",
+
+    // Deduplication cleaner
+    dedup_title: "Dọn dẹp sự kiện trùng lặp",
+    dedup_desc: "Phát hiện và xóa các sự kiện trùng lịch, trùng mã môn học trên Google Calendar tạo bởi các lần đồng bộ trước.",
+    btn_clean_duplicates: "🧹 Quét & Dọn trùng lặp",
+    dedup_scanning: "Đang quét lịch để tìm sự kiện trùng...",
+    dedup_complete: "Đã dọn dẹp sự kiện trùng lặp thành công!",
+
+    // Automatic Sync
+    auto_sync_title: "Tự động đồng bộ ngầm",
+    auto_sync_desc: "Tự động kiểm tra thay đổi phòng học và lịch dạy bù định kỳ ngay cả khi đóng tiện ích.",
+    auto_sync_enable: "Bật tự động đồng bộ ngầm",
+    auto_sync_freq: "Tần suất",
+    freq_daily: "Hàng ngày",
+    freq_weekly: "Hàng tuần",
+    day_of_week: "Ngày trong tuần",
+    sync_time_label: "Thời gian chạy",
+    btn_save_auto_sync: "Lưu lịch đồng bộ",
+    auto_sync_saved: "Đã lưu thiết lập tự động đồng bộ!",
+
+    // Accounts Tab
+    accounts_title: "Quản lý Tài khoản",
     google_account: "Tài khoản Google",
-    portal_account: "Hồ sơ Sinh viên FTU",
-    student_name: "Họ và tên",
-    student_email: "Email FTU",
-    student_role: "Vai trò",
-    tkb_tuan_status: "Thời khóa biểu tuần (/tkb-tuan)",
-    tkb_tuan_verified: "✓ /tkb-tuan Đã xác thực",
-    tkb_tuan_failed: "✗ Không thể truy cập /tkb-tuan",
+    google_desc: "Cần thiết để tạo và đồng bộ sự kiện vào Google Calendar.",
+    connect_google: "Kết nối Google Account",
     switch_account: "Đổi tài khoản",
-    toggle_details: "Chi tiết tài khoản",
-    verify_now: "Kiểm tra /tkb-tuan",
-    sync_now: "Đồng bộ TKB ngay",
-    sync_week_title: "Đồng bộ Tuần sang Google Calendar",
-    label_select_week: "Chọn tuần cần đồng bộ",
-    btn_sync_week: "📅 Đồng bộ Tuần vào \"FTU Schedule\"",
-    enter_credentials_msg: "Vui lòng nhập Mã sinh viên và Mật khẩu trong phần Thông tin Cổng Đào Tạo"
+    disconnect: "Đăng xuất",
+    google_not_authorized: "Chưa kết nối",
+    google_authorized: "Đã xác thực",
+    disconnected: "Chưa kết nối",
+
+    portal_account: "Cổng Đào Tạo FTU",
+    portal_desc: "Giao tiếp trực tiếp với REST API qldt.hcmc.ftu.edu.vn.",
+    portal_credentials: "Thông tin đăng nhập Cổng",
+    edit_creds: "Chỉnh sửa",
+    student_id: "Mã sinh viên",
+    student_id_placeholder: "VD: 2415115057",
+    password: "Mật khẩu",
+    password_placeholder: "Nhập mật khẩu cổng đào tạo",
+    show_password: "Hiện",
+    hide_password: "Ẩn",
+    btn_save_creds: "Lưu & Xác thực kết nối",
+    portal_verified: "✓ Đã xác thực kết nối",
+    portal_expired: "Hết hạn phiên",
+    portal_not_configured: "Chưa nhập thông tin",
+
+    tkb_verification_title: "Xác thực API Thời khóa biểu",
+    tkb_verified_desc: "Đã tải dữ liệu thời khóa biểu trực tiếp từ cổng đào tạo.",
+    tkb_unverified_desc: "Chưa xác thực quyền truy cập /tkb-tuan.",
+    tkb_verified_badge: "✓ Đã xác thực",
+    tkb_unverified_badge: "✗ Chưa xác thực",
+    tkb_pending_badge: "Chờ kiểm tra",
+    verify_now: "Kiểm tra /tkb-tuan ngay",
+
+    diagnostics_title: "Chẩn đoán Kết nối Trực tiếp",
+    diag_desc: "Kiểm tra phản hồi thực tế từ các endpoint REST API riêng của Cổng Đào Tạo:",
+    diag_sem_btn: "Kiểm tra /tkb-hocky (Học kỳ)",
+    diag_week_btn: "Kiểm tra /tkb-tuan (Thời khóa biểu)",
+    diag_testing: "Đang kiểm tra...",
+    diag_passed: "Thành công",
+    diag_failed: "Thất bại",
+
+    // Settings Tab
+    settings_title: "Tùy chọn & Công cụ",
+    appearance_title: "Giao diện",
+    theme_label: "Chế độ giao diện",
+    theme_light: "Sáng",
+    theme_dark: "Tối",
+    language_label: "Ngôn ngữ",
+    lang_vi: "VN",
+    lang_en: "EN",
+
+    offline_tools_title: "Bộ công cụ Ngoại tuyến (.ics)",
+    offline_tools_desc: "Xuất file lịch tiêu chuẩn RFC 5545 .ics hoặc nhập file Excel từ cổng đào tạo hoàn toàn trên trình duyệt.",
+    export_semester_ics: "Xuất TKB cả kỳ (.ics)",
+    export_makeup_ics: "Xuất TKB học bù (.ics)",
+    drop_excel: "Kéo thả Export_TKB.xlsx vào đây hoặc bấm để chọn",
+    excel_imported: "Đã đọc file Excel thời khóa biểu thành công!",
+
+    about_title: "Thông tin & Quyền riêng tư",
+    privacy_notice: "Tiện ích hoạt động 100% trên thiết bị của bạn. Thông tin đăng nhập và dữ liệu lịch được lưu an toàn trong trình duyệt và không bao giờ gửi tới bất kỳ máy chủ trung gian nào."
   }
 };
 
 let currentLang = 'vi';
 
 export function setLang(lang) {
-  currentLang = lang;
+  if (dict[lang]) {
+    currentLang = lang;
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+      chrome.storage.local.set({ appLang: lang });
+    }
+  }
 }
 
 export function getLang() {
-    return currentLang;
+  return currentLang;
 }
 
 export function t(key) {
-  return dict[currentLang][key] || key;
+  if (dict[currentLang] && dict[currentLang][key] !== undefined) {
+    return dict[currentLang][key];
+  }
+  if (dict['en'] && dict['en'][key] !== undefined) {
+    return dict['en'][key];
+  }
+  return key;
 }

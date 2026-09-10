@@ -1,6 +1,12 @@
 /**
+ * Google Calendar Service with Universal Cross-Chromium OAuth2,
+ * Pre-Insert Deduplication Engine, Smart Room Patching, Clash Detection,
+ * Multi-Scope Sync, and Calendar Duplicate Cleaner.
+ */
+
+/**
  * Safe fetch helper for Google Calendar / OAuth APIs.
- * Seamlessly handles development preview tokens (starting with 'ya29.studio_')
+ * Handles development preview tokens (starting with 'ya29.studio_')
  * without mutating global window.fetch, and calls native fetch in production.
  */
 async function calendarApiFetch(url, options = {}) {
@@ -72,12 +78,19 @@ async function calendarApiFetch(url, options = {}) {
       };
     }
 
-    // GET / POST / PATCH events
+    // GET / POST / PATCH / DELETE events
     const eventsMatch = urlStr.match(/\/calendars\/([^/]+)\/events(?:\/([^?]+))?/);
     if (eventsMatch) {
       const calId = decodeURIComponent(eventsMatch[1]);
       const eventId = eventsMatch[2];
       if (!mockEvents[calId]) mockEvents[calId] = [];
+
+      // DELETE event
+      if (eventId && options.method === 'DELETE') {
+        mockEvents[calId] = mockEvents[calId].filter(e => e.id !== eventId);
+        try { localStorage.setItem('mockGoogleEvents', JSON.stringify(mockEvents)); } catch(e) {}
+        return { ok: true, status: 204, json: async () => ({}) };
+      }
 
       // GET events
       if (!eventId && (!options.method || options.method === 'GET')) {
@@ -143,8 +156,8 @@ export async function fetchGoogleProfile(token) {
       return {
         email: data.email,
         name: data.name || data.email,
-        picture: data.picture || null,
-        verified: true
+        picture: data.picture,
+        verified: data.verified_email
       };
     }
   } catch (e) {
@@ -173,10 +186,14 @@ export async function fetchGoogleProfile(token) {
   return null;
 }
 
+/**
+ * Cross-Chromium OAuth 2.0 authorization using chrome.identity.launchWebAuthFlow
+ * with fallback to chrome.identity.getAuthToken.
+ */
 export async function authorizeGoogle() {
   return new Promise((resolve, reject) => {
-    const clientId = chrome.runtime.getManifest().oauth2.client_id;
-    if (clientId.includes('YOUR_GOOGLE_CLIENT_ID')) {
+    const clientId = chrome.runtime.getManifest().oauth2?.client_id;
+    if (!clientId || clientId.includes('YOUR_GOOGLE_CLIENT_ID')) {
       alert("Missing Google OAuth Client ID! Please update manifest.json with a valid Client ID.");
       return reject(new Error("Missing OAuth Client ID"));
     }
@@ -193,13 +210,13 @@ export async function authorizeGoogle() {
       async (responseUrl) => {
         let token = null;
         if (chrome.runtime.lastError || !responseUrl) {
-            // Fallback to getAuthToken
-            token = await new Promise((res) => {
-              chrome.identity.getAuthToken({ interactive: true }, (tok) => {
-                if (chrome.runtime.lastError) res(null);
-                else res(tok);
-              });
+          // Fallback to getAuthToken for Google Chrome logged-in profiles
+          token = await new Promise((res) => {
+            chrome.identity.getAuthToken({ interactive: true }, (tok) => {
+              if (chrome.runtime.lastError) res(null);
+              else res(tok);
             });
+          });
         } else {
           try {
             const url = new URL(responseUrl.replace('#', '?'));
@@ -213,7 +230,6 @@ export async function authorizeGoogle() {
           return reject(new Error(chrome.runtime.lastError?.message || 'Authentication cancelled or token missing'));
         }
 
-        // Fetch user profile info
         const profile = await fetchGoogleProfile(token);
         const accountInfo = {
           token,
@@ -248,7 +264,7 @@ export async function logoutGoogle() {
 export async function checkAuth() {
   return new Promise((resolve) => {
     chrome.storage.local.get(['googleAccount'], async (res) => {
-      if (res.googleAccount && res.googleAccount.email) {
+      if (res.googleAccount && res.googleAccount.email && res.googleAccount.token) {
         resolve(res.googleAccount);
         return;
       }
@@ -276,7 +292,6 @@ export async function checkAuth() {
 }
 
 export async function getOrCreateFtuCalendar(token) {
-  // Check if calendar already cached in storage
   const cachedCalId = await new Promise((resolve) => {
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(['ftuCalendarId'], (res) => resolve(res.ftuCalendarId || null));
@@ -286,7 +301,6 @@ export async function getOrCreateFtuCalendar(token) {
   });
 
   try {
-    // 1. Fetch user calendar list to find "FTU Schedule"
     const listRes = await calendarApiFetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -302,7 +316,6 @@ export async function getOrCreateFtuCalendar(token) {
       }
     }
 
-    // 2. Not found: create dedicated "FTU Schedule" secondary calendar
     const createRes = await calendarApiFetch('https://www.googleapis.com/calendar/v3/calendars', {
       method: 'POST',
       headers: {
@@ -318,22 +331,20 @@ export async function getOrCreateFtuCalendar(token) {
 
     if (createRes.ok) {
       const created = await createRes.json();
-      console.log('[Google Calendar] Created new calendar "FTU Schedule":', created.id);
       if (typeof chrome !== 'undefined' && chrome.storage?.local) {
         chrome.storage.local.set({ ftuCalendarId: created.id });
       }
       return { calendarId: created.id, calendarName: 'FTU Schedule', isSecondary: true };
     }
   } catch (err) {
-    console.warn('[Google Calendar] Secondary calendar creation failed or not supported by scope. Falling back to primary calendar:', err);
+    console.warn('[Google Calendar] Secondary calendar creation failed. Falling back to primary:', err);
   }
 
-  // Fallback to primary calendar if secondary calendar not permitted
   return { calendarId: cachedCalId || 'primary', calendarName: 'Primary (FTU Schedule)', isSecondary: false };
 }
 
 export async function fetchGoogleEvents(token, timeMin, timeMax, calendarId = 'primary') {
-  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&singleEvents=true&maxResults=250`;
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&singleEvents=true&maxResults=2500`;
   const res = await calendarApiFetch(url, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
@@ -370,7 +381,17 @@ export async function insertGoogleEvent(token, eventData, calendarId = 'primary'
   return await res.json();
 }
 
-const PERIOD_TIMES = {
+export async function deleteGoogleEvent(token, eventId, calendarId = 'primary') {
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`;
+  const res = await calendarApiFetch(url, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!res.ok && res.status !== 404) throw new Error(`Failed to delete event (HTTP ${res.status})`);
+  return true;
+}
+
+export const PERIOD_TIMES = {
   1: { start: '06:45', end: '07:30' },
   2: { start: '07:30', end: '08:15' },
   3: { start: '08:15', end: '09:00' },
@@ -389,73 +410,174 @@ const PERIOD_TIMES = {
 };
 
 /**
- * Synchronizes an entire week's schedule to Google Calendar of the logged-in account
- * under the "FTU Schedule" label / calendar.
- * - Items not already present are created.
- * - Items with mismatched information (e.g. changed room, lecturer, or time)
- *   are overwritten with fresh data from the FTU portal.
+ * Extracts course code (e.g. ESP341, KTE306, MKT401, TMA408) from string
  */
-export async function syncWeekToGoogleCalendar(token, weekData) {
-  if (!token) throw new Error('Chưa đăng nhập tài khoản Google');
-  if (!weekData || !weekData.ds_thoi_khoa_bieu) {
-    throw new Error('Dữ liệu tuần không hợp lệ hoặc rỗng');
+export function extractCourseCode(text) {
+  if (!text) return '';
+  const match = String(text).match(/\b([A-Z]{2,5}\d{3,4})\b/i);
+  return match ? match[1].toUpperCase() : '';
+}
+
+/**
+ * Pre-Insert Deduplication Engine with Strict Overwrite & Clash Prevention
+ * Matches candidate class against existing Google Calendar events.
+ */
+export function findMatchingCalendarEvent(candidate, existingEvents) {
+  const { dateStr, startTimeStr, endTimeStr, courseCode, id_tkb, summary } = candidate;
+  const candStartMin = timeStringToMinutes(startTimeStr);
+  const candEndMin = timeStringToMinutes(endTimeStr);
+
+  let exactMatch = null;
+  let codeMatch = null;
+  let clashEvent = null;
+
+  for (const ev of existingEvents) {
+    const evStartRaw = ev.start?.dateTime || ev.start?.date || '';
+    const evEndRaw = ev.end?.dateTime || ev.end?.date || '';
+    const evDate = evStartRaw.split('T')[0];
+
+    // Check same calendar day
+    if (evDate !== dateStr) continue;
+
+    const evPriv = ev.extendedProperties?.private || {};
+    const evCourseCode = (evPriv.courseCode || evPriv.ma_mon || extractCourseCode(ev.summary) || '').toUpperCase();
+    const evIdTkb = evPriv.id_tkb || '';
+
+    // Extract event start and end hours/minutes
+    let evStartMin = 0;
+    let evEndMin = 0;
+    if (evStartRaw.includes('T')) {
+      const timePart = evStartRaw.split('T')[1].substring(0, 5);
+      evStartMin = timeStringToMinutes(timePart);
+    }
+    if (evEndRaw.includes('T')) {
+      const timePart = evEndRaw.split('T')[1].substring(0, 5);
+      evEndMin = timeStringToMinutes(timePart);
+    }
+
+    // Overlapping shift condition (shift times overlap or are within 30 min window)
+    const timesOverlap = Math.max(candStartMin, evStartMin) < Math.min(candEndMin, evEndMin) ||
+                         Math.abs(candStartMin - evStartMin) <= 35;
+
+    // Match 1: Exact ID TKB match
+    if (id_tkb && evIdTkb && String(id_tkb) === String(evIdTkb)) {
+      exactMatch = ev;
+      break;
+    }
+
+    // Match 2: Same course code and overlapping time window
+    if (courseCode && evCourseCode && courseCode.toUpperCase() === evCourseCode && timesOverlap) {
+      codeMatch = ev;
+      break;
+    }
+
+    // Match 3: Matching summary string or course code in summary
+    if (courseCode && (ev.summary || '').toUpperCase().includes(courseCode.toUpperCase()) && timesOverlap) {
+      codeMatch = ev;
+      break;
+    }
+
+    // Detect clash: Different course code / subject scheduled at the same time window!
+    if (timesOverlap && evCourseCode && courseCode && evCourseCode !== courseCode.toUpperCase()) {
+      clashEvent = ev;
+    }
   }
+
+  return {
+    matchedEvent: exactMatch || codeMatch,
+    clashEvent
+  };
+}
+
+function timeStringToMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+/**
+ * Synchronizes class schedules to Google Calendar with deduplication,
+ * patch diffing, and support for multi-scope sync:
+ * - 'this_week': Current active week
+ * - 'from_this_week': Current week through semester end
+ * - 'semester': All weeks in semester
+ */
+export async function syncScheduleToGoogleCalendar(token, scheduleData, options = {}) {
+  if (!token) throw new Error('Chưa đăng nhập tài khoản Google');
+  if (!scheduleData || !scheduleData.ds_tuan_tkb) {
+    throw new Error('Dữ liệu thời khóa biểu rỗng hoặc không hợp lệ');
+  }
+
+  const scope = options.scope || 'this_week'; // 'this_week' | 'from_this_week' | 'semester'
+  const activeWeekIndex = options.activeWeekIndex ?? 0;
 
   // 1. Get or create calendar with label "FTU Schedule"
   const { calendarId, calendarName } = await getOrCreateFtuCalendar(token);
-  console.log(`[Sync Week] Targeting calendar "${calendarName}" (${calendarId})`);
 
-  // 2. Determine week date window
-  const weekClasses = weekData.ds_thoi_khoa_bieu || [];
-  if (weekClasses.length === 0) {
+  // 2. Filter weeks based on scope
+  const allWeeks = scheduleData.ds_tuan_tkb || [];
+  let targetWeeks = [];
+
+  if (scope === 'this_week') {
+    targetWeeks = [allWeeks[activeWeekIndex] || allWeeks[0]].filter(Boolean);
+  } else if (scope === 'from_this_week') {
+    targetWeeks = allWeeks.slice(activeWeekIndex);
+  } else {
+    // 'semester'
+    targetWeeks = allWeeks;
+  }
+
+  // Flatten classes to sync
+  const candidateClasses = [];
+  targetWeeks.forEach(week => {
+    (week.ds_thoi_khoa_bieu || []).forEach(item => {
+      candidateClasses.push(item);
+    });
+  });
+
+  if (candidateClasses.length === 0) {
     return {
       success: true,
       insertedCount: 0,
       updatedCount: 0,
       skippedCount: 0,
+      clashesCount: 0,
       total: 0,
       calendarName,
-      message: 'Tuần này không có tiết học nào để đồng bộ.'
+      message: 'Không tìm thấy lớp học nào trong phạm vi đã chọn.'
     };
   }
 
-  // Parse start/end of the week (format: DD/MM/YYYY)
+  // 3. Determine overall timeMin and timeMax for query
+  const dates = candidateClasses
+    .map(c => c.ngay_hoc ? new Date(c.ngay_hoc.split('T')[0]) : null)
+    .filter(d => d && !isNaN(d.getTime()));
+
   let minDate = new Date();
   let maxDate = new Date();
-
-  if (weekData.ngay_bat_dau && weekData.ngay_ket_thuc) {
-    const [d1, m1, y1] = weekData.ngay_bat_dau.split('/').map(Number);
-    const [d2, m2, y2] = weekData.ngay_ket_thuc.split('/').map(Number);
-    minDate = new Date(Date.UTC(y1, m1 - 1, d1, 0, 0, 0) - 7 * 3600000);
-    maxDate = new Date(Date.UTC(y2, m2 - 1, d2, 23, 59, 59) - 7 * 3600000);
-  } else {
-    // derive from classes
-    const dates = weekClasses.map(c => new Date(c.ngay_hoc)).filter(d => !isNaN(d.getTime()));
-    if (dates.length > 0) {
-      minDate = new Date(Math.min(...dates.map(d => d.getTime())) - 24 * 3600000);
-      maxDate = new Date(Math.max(...dates.map(d => d.getTime())) + 24 * 3600000);
-    }
+  if (dates.length > 0) {
+    minDate = new Date(Math.min(...dates.map(d => d.getTime())) - 24 * 3600000);
+    maxDate = new Date(Math.max(...dates.map(d => d.getTime())) + 24 * 3600000);
   }
 
-  // 3. Fetch existing events from the target calendar in this time window
+  // 4. Fetch existing calendar events for pre-insert deduplication
   const existingEvents = await fetchGoogleEvents(token, minDate, maxDate, calendarId);
-  console.log(`[Sync Week] Found ${existingEvents.length} existing events in calendar window`);
 
   let insertedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
+  let clashesCount = 0;
   const changes = [];
 
-  // 4. Process each class from the FTU portal schedule
-  for (const item of weekClasses) {
+  // 5. Process each candidate class through Deduplication Engine
+  for (const item of candidateClasses) {
     const startPeriod = Number(item.tiet_bat_dau) || 1;
     const periodsCount = Number(item.so_tiet) || 1;
     const endPeriod = startPeriod + periodsCount - 1;
 
-    const startTimeStr = PERIOD_TIMES[startPeriod]?.start || '07:00';
+    const startTimeStr = PERIOD_TIMES[startPeriod]?.start || '06:45';
     const endTimeStr = PERIOD_TIMES[endPeriod]?.end || '09:00';
 
-    // Parse class date (YYYY-MM-DD)
     const rawDate = item.ngay_hoc || '';
     const dateStr = rawDate.split('T')[0];
     if (!dateStr) continue;
@@ -463,23 +585,29 @@ export async function syncWeekToGoogleCalendar(token, weekData) {
     const startDateTime = `${dateStr}T${startTimeStr}:00+07:00`;
     const endDateTime = `${dateStr}T${endTimeStr}:00+07:00`;
 
-    const summary = `${item.ten_mon} (${item.ma_mon})`;
+    const courseCode = item.ma_mon || extractCourseCode(item.ten_mon);
+    const isMakeup = Boolean(item.is_day_bu || (item.ten_mon || '').includes('Dạy bù') || (item.ghi_chu || '').includes('Dạy bù'));
+    const makeupTag = isMakeup ? ' (Dạy bù)' : '';
+    const summary = `${item.ten_mon}${makeupTag} (${courseCode})`;
     const expectedLocation = item.ma_phong ? `Phòng ${item.ma_phong}` : '';
+    
     const description = [
       `Môn học: ${item.ten_mon}`,
-      `Mã môn: ${item.ma_mon}`,
+      `Mã môn: ${courseCode}`,
       `Lớp: ${item.ten_lop || item.ma_lop || 'N/A'}`,
       `Giảng viên: ${item.ten_giang_vien || 'Chưa cập nhật'}`,
       `Phòng học: ${item.ma_phong || 'Chưa xếp phòng'}`,
       `Tiết học: Tiết ${startPeriod} - ${endPeriod} (${periodsCount} tiết)`,
       `Nhóm: ${item.ma_nhom || 'N/A'}`,
-      `Mã TKB: ${item.id_tkb || 'N/A'}`
-    ].join('\n');
+      `Mã TKB: ${item.id_tkb || 'N/A'}`,
+      isMakeup ? 'Lưu ý: Lớp học bù' : ''
+    ].filter(Boolean).join('\n');
 
     const expectedProperties = {
       app: 'ftu-calendar-sync',
       id_tkb: String(item.id_tkb || ''),
-      ma_mon: String(item.ma_mon || ''),
+      courseCode: String(courseCode),
+      ma_mon: String(courseCode),
       ngay_hoc: String(dateStr),
       tiet_bat_dau: String(startPeriod),
       so_tiet: String(periodsCount),
@@ -493,66 +621,63 @@ export async function syncWeekToGoogleCalendar(token, weekData) {
       description,
       start: { dateTime: startDateTime, timeZone: 'Asia/Ho_Chi_Minh' },
       end: { dateTime: endDateTime, timeZone: 'Asia/Ho_Chi_Minh' },
-      colorId: '9', // Grape/Blue
+      colorId: isMakeup ? '11' : '9', // Flamingo for Makeup, Grape for standard
       extendedProperties: {
         private: expectedProperties
       }
     };
 
-    // Find matching existing event
-    const existing = existingEvents.find(ev => {
-      const priv = ev.extendedProperties?.private;
-      if (priv) {
-        if (priv.id_tkb && priv.id_tkb === String(item.id_tkb)) return true;
-        if (priv.ma_mon === String(item.ma_mon) && priv.ngay_hoc === dateStr && priv.tiet_bat_dau === String(startPeriod)) {
-          return true;
-        }
-      }
-      // Fallback matching by title and start time
-      const evStart = ev.start?.dateTime || '';
-      if (evStart.startsWith(`${dateStr}T${startTimeStr}`) && (ev.summary || '').includes(item.ma_mon)) {
-        return true;
-      }
-      return false;
-    });
+    // Run Pre-Insert Deduplication
+    const { matchedEvent, clashEvent } = findMatchingCalendarEvent({
+      dateStr,
+      startTimeStr,
+      endTimeStr,
+      courseCode,
+      id_tkb: item.id_tkb,
+      summary
+    }, existingEvents);
 
-    if (existing) {
-      // Check for mismatched information between Google Calendar and FTU Portal
-      const existingLoc = (existing.location || '').trim();
+    if (clashEvent) {
+      clashesCount++;
+      changes.push({
+        type: 'clash',
+        subject: item.ten_mon,
+        clashWith: clashEvent.summary,
+        time: `${dateStr} ${startTimeStr}`
+      });
+    }
+
+    if (matchedEvent) {
+      // Check if location or details need update
+      const existingLoc = (matchedEvent.location || '').trim();
       const newLoc = expectedLocation.trim();
-      const existingPriv = existing.extendedProperties?.private || {};
+      const existingPriv = matchedEvent.extendedProperties?.private || {};
 
-      const roomMismatched = existingLoc !== newLoc || (existingPriv.ma_phong && existingPriv.ma_phong !== String(item.ma_phong || ''));
-      const lecturerMismatched = existingPriv.ten_giang_vien && existingPriv.ten_giang_vien !== String(item.ten_giang_vien || '');
-      const timeMismatched = (existing.start?.dateTime && !existing.start.dateTime.startsWith(`${dateStr}T${startTimeStr}`)) ||
-                             (existing.end?.dateTime && !existing.end.dateTime.startsWith(`${dateStr}T${endTimeStr}`));
-      const titleMismatched = existing.summary !== summary;
+      const roomChanged = existingLoc !== newLoc || (existingPriv.ma_phong && existingPriv.ma_phong !== String(item.ma_phong || ''));
+      const lecturerChanged = existingPriv.ten_giang_vien && existingPriv.ten_giang_vien !== String(item.ten_giang_vien || '');
+      const titleNeedsUpdate = matchedEvent.summary !== summary;
 
-      if (roomMismatched || lecturerMismatched || timeMismatched || titleMismatched) {
-        // OVERWRITE with info from the portal!
-        console.log(`[Sync Week] Overwriting mismatched info for "${item.ten_mon}" in calendar:`, {
-          roomMismatch: roomMismatched ? `${existingLoc} -> ${newLoc}` : 'no',
-          timeMismatch: timeMismatched,
-          lecturerMismatch: lecturerMismatched
-        });
-
-        await patchGoogleEvent(token, existing.id, eventPayload, calendarId);
+      if (roomChanged || lecturerChanged || titleNeedsUpdate) {
+        // PATCH existing event to prevent duplicates!
+        await patchGoogleEvent(token, matchedEvent.id, eventPayload, calendarId);
         updatedCount++;
         changes.push({
           type: 'updated',
           subject: item.ten_mon,
           room: item.ma_phong,
-          reason: roomMismatched ? `Cập nhật phòng: ${newLoc || 'Chưa xếp'}` : 'Cập nhật thông tin từ Cổng Đào Tạo'
+          reason: roomChanged ? `Phòng học cập nhật: ${newLoc || 'Chưa xếp'}` : 'Đồng bộ lại thông tin'
         });
+        // Update local cache of event
+        Object.assign(matchedEvent, eventPayload);
       } else {
-        // Information matches perfectly, no update needed
+        // Identical: Skip insertion entirely (prevents duplicate!)
         skippedCount++;
       }
     } else {
-      // Item not present in Google Calendar: Insert new event!
-      console.log(`[Sync Week] Inserting new event for "${item.ten_mon}" (${dateStr}, ${startPeriod}-${endPeriod})`);
-      await insertGoogleEvent(token, eventPayload, calendarId);
+      // Insert fresh event
+      const created = await insertGoogleEvent(token, eventPayload, calendarId);
       insertedCount++;
+      existingEvents.push(created || eventPayload);
       changes.push({
         type: 'inserted',
         subject: item.ten_mon,
@@ -569,7 +694,74 @@ export async function syncWeekToGoogleCalendar(token, weekData) {
     insertedCount,
     updatedCount,
     skippedCount,
-    total: weekClasses.length,
+    clashesCount,
+    total: candidateClasses.length,
     changes
+  };
+}
+
+/**
+ * Cleans up duplicate events in Google Calendar (e.g. duplicate entries from
+ * previous imports as shown in image.png).
+ */
+export async function cleanCalendarDuplicates(token, calendarId = 'primary') {
+  if (!token) throw new Error('Chưa đăng nhập tài khoản Google');
+
+  const now = new Date();
+  const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const timeMax = new Date(now.getFullYear(), now.getMonth() + 5, 1);
+
+  const events = await fetchGoogleEvents(token, timeMin, timeMax, calendarId);
+  if (!events || events.length === 0) {
+    return { success: true, scannedCount: 0, removedCount: 0 };
+  }
+
+  let removedCount = 0;
+  const groups = new Map();
+
+  // Group events by day and course code
+  events.forEach(ev => {
+    const startStr = ev.start?.dateTime || ev.start?.date || '';
+    const dateStr = startStr.split('T')[0];
+    if (!dateStr) return;
+
+    const courseCode = (ev.extendedProperties?.private?.courseCode || 
+                        ev.extendedProperties?.private?.ma_mon || 
+                        extractCourseCode(ev.summary) || '').toUpperCase();
+    if (!courseCode) return;
+
+    const key = `${dateStr}_${courseCode}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ev);
+  });
+
+  // For each group with > 1 event, keep the most informative one and delete duplicates
+  for (const [key, evList] of groups.entries()) {
+    if (evList.length > 1) {
+      // Sort by preference: events with private extendedProperties, or longer description
+      evList.sort((a, b) => {
+        const aHasProps = Boolean(a.extendedProperties?.private?.id_tkb);
+        const bHasProps = Boolean(b.extendedProperties?.private?.id_tkb);
+        if (aHasProps !== bHasProps) return bHasProps ? 1 : -1;
+        return (b.description || '').length - (a.description || '').length;
+      });
+
+      // Keep index 0, delete others
+      const toDelete = evList.slice(1);
+      for (const dup of toDelete) {
+        try {
+          await deleteGoogleEvent(token, dup.id, calendarId);
+          removedCount++;
+        } catch (e) {
+          console.warn('[Clean Duplicates] Could not delete event:', dup.id, e);
+        }
+      }
+    }
+  }
+
+  return {
+    success: true,
+    scannedCount: events.length,
+    removedCount
   };
 }

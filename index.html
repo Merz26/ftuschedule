@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,37 +7,77 @@
     <meta name="description" content="Chrome extension to synchronize FTU university schedules (/tkb-tuan) with Google Calendar.">
     <meta property="og:title" content="FTU Schedule Sync">
     <meta property="og:description" content="Chrome extension to synchronize FTU university schedules (/tkb-tuan) with Google Calendar.">
+    <script src="mockChromeApis.js"></script>
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
+            padding: 12px;
             background-color: #f0f2f5;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
         .extension-frame {
             width: 400px;
-            height: 550px;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 100%;
+            height: 600px;
+            max-height: 96vh;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
             overflow: hidden;
-            background: white;
+            background: #ffffff;
             position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+        .browser-mock-bar {
+            height: 32px;
+            min-height: 32px;
+            background: #f3f4f6;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            gap: 6px;
+            font-size: 11px;
+            color: #6b7280;
+            user-select: none;
+        }
+        .dot { width: 9px; height: 9px; border-radius: 50%; }
+        .dot-red { background: #ef4444; }
+        .dot-yellow { background: #f59e0b; }
+        .dot-green { background: #10b981; }
+        .mock-title { 
+            margin-left: auto; 
+            font-weight: 600; 
+            font-size: 11px;
+            color: #4b5563;
         }
         iframe {
+            flex: 1 1 0;
+            min-height: 0;
             width: 100%;
             height: 100%;
             border: none;
+            display: block;
         }
     </style>
 </head>
 <body>
-    <div class="extension-frame">
-        <script type="module" src="mockChromeApis.js"></script>
-        <iframe src="extension/popup.html"></iframe>
+    <div class="extension-frame" id="extension_mock_frame">
+        <div class="browser-mock-bar">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span class="mock-title">FTU Schedule Sync (Extension Preview)</span>
+        </div>
+        <iframe id="extension_popup_iframe" src="extension/popup.html"></iframe>
     </div>
 </body>
 </html>

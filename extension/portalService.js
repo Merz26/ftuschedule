@@ -286,3 +286,33 @@ export function extractClassesFromSchedule(scheduleData, targetDate = new Date()
   return { classes, dateStr };
 }
 
+export const verifyPortalAccess = verifyTkbTuanAccess;
+export const portalLogin = loginToPortal;
+
+export async function getStoredPortalCredentials() {
+  return new Promise((resolve) => {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+      resolve(null);
+      return;
+    }
+    chrome.storage.local.get(['studentId', 'password'], (res) => {
+      resolve({
+        studentId: res.studentId || '',
+        password: res.password || ''
+      });
+    });
+  });
+}
+
+export async function savePortalCredentials(studentId, password) {
+  return new Promise((resolve) => {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+      resolve();
+      return;
+    }
+    chrome.storage.local.set({ studentId, password }, () => {
+      resolve();
+    });
+  });
+}
+
