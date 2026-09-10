@@ -532,8 +532,19 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
     throw new Error('Dữ liệu thời khóa biểu rỗng hoặc không hợp lệ');
   }
 
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const scope = options.scope || 'this_week'; // 'this_week' | 'from_this_week' | 'semester'
   const activeWeekIndex = options.activeWeekIndex ?? 0;
+
+  if (onProgress) {
+    onProgress({
+      phase: 'init',
+      current: 0,
+      total: 0,
+      percent: 5,
+      message: 'Đang kết nối Google Calendar...'
+    });
+  }
 
   // 1. Get or create calendar with label "FTU Schedule"
   const { calendarId, calendarName } = await getOrCreateFtuCalendar(token);
@@ -560,6 +571,15 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
   });
 
   if (candidateClasses.length === 0) {
+    if (onProgress) {
+      onProgress({
+        phase: 'completed',
+        current: 0,
+        total: 0,
+        percent: 100,
+        message: 'Không tìm thấy lớp học nào trong phạm vi đã chọn.'
+      });
+    }
     return {
       success: true,
       insertedCount: 0,
@@ -570,6 +590,16 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
       calendarName,
       message: 'Không tìm thấy lớp học nào trong phạm vi đã chọn.'
     };
+  }
+
+  if (onProgress) {
+    onProgress({
+      phase: 'fetching',
+      current: 0,
+      total: candidateClasses.length,
+      percent: 15,
+      message: 'Đang quét lịch hiện tại để chống trùng lặp...'
+    });
   }
 
   // 3. Determine overall timeMin and timeMax for query
@@ -594,7 +624,27 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
   const changes = [];
 
   // 5. Process each candidate class through Deduplication Engine
-  for (const item of candidateClasses) {
+  for (let i = 0; i < candidateClasses.length; i++) {
+    const item = candidateClasses[i];
+    const percent = Math.min(96, Math.round(15 + ((i + 1) / candidateClasses.length) * 80));
+
+    if (onProgress) {
+      onProgress({
+        phase: 'syncing',
+        current: i + 1,
+        total: candidateClasses.length,
+        percent,
+        subject: item.ten_mon,
+        room: item.ma_phong,
+        message: `Đang xử lý (${i + 1}/${candidateClasses.length}): ${item.ten_mon}`
+      });
+    }
+
+    // Micro-delay in studio mock mode to ensure realistic, smooth visual progress
+    if (token && token.startsWith('ya29.studio_')) {
+      await new Promise(r => setTimeout(r, 20));
+    }
+
     const startPeriod = Number(item.tiet_bat_dau) || 1;
     const periodsCount = Number(item.so_tiet) || 1;
     const endPeriod = startPeriod + periodsCount - 1;
@@ -711,6 +761,38 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
     }
   }
 
+  if (onProgress) {
+    onProgress({
+      phase: 'completed',
+      current: candidateClasses.length,
+      total: candidateClasses.length,
+      percent: 100,
+      message: 'Đồng bộ hoàn tất thành công!'
+    });
+  }
+
+  const lastSyncData = {
+    timestamp: Date.now(),
+    dateStr: new Date().toISOString(),
+    insertedCount,
+    updatedCount,
+    skippedCount,
+    clashesCount,
+    total: candidateClasses.length,
+    scope
+  };
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local?.set) {
+      chrome.storage.local.set({
+        lastSyncTimestamp: lastSyncData.timestamp,
+        lastSyncInfo: lastSyncData
+      });
+    }
+  } catch (err) {
+    console.warn('[Sync] Could not save lastSyncInfo to storage:', err);
+  }
+
   return {
     success: true,
     calendarName,
@@ -720,7 +802,9 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
     skippedCount,
     clashesCount,
     total: candidateClasses.length,
-    changes
+    changes,
+    timestamp: lastSyncData.timestamp,
+    syncInfo: lastSyncData
   };
 }
 
@@ -728,8 +812,13 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
  * Cleans up duplicate events in Google Calendar (e.g. duplicate entries from
  * previous imports as shown in image.png).
  */
-export async function cleanCalendarDuplicates(token, calendarId = 'primary') {
+export async function cleanCalendarDuplicates(token, calendarId = 'primary', options = {}) {
   if (!token) throw new Error('Chưa đăng nhập tài khoản Google');
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+
+  if (onProgress) {
+    onProgress({ phase: 'scanning', percent: 20, message: 'Đang quét toàn bộ sự kiện trên Google Calendar...' });
+  }
 
   const now = new Date();
   const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -737,7 +826,12 @@ export async function cleanCalendarDuplicates(token, calendarId = 'primary') {
 
   const events = await fetchGoogleEvents(token, timeMin, timeMax, calendarId);
   if (!events || events.length === 0) {
+    if (onProgress) onProgress({ phase: 'completed', percent: 100, message: 'Không có sự kiện nào để quét.' });
     return { success: true, scannedCount: 0, removedCount: 0 };
+  }
+
+  if (onProgress) {
+    onProgress({ phase: 'analyzing', percent: 50, message: `Đã quét ${events.length} sự kiện. Đang phân tích trùng lặp...` });
   }
 
   let removedCount = 0;
@@ -774,6 +868,13 @@ export async function cleanCalendarDuplicates(token, calendarId = 'primary') {
       const toDelete = evList.slice(1);
       for (const dup of toDelete) {
         try {
+          if (onProgress) {
+            onProgress({
+              phase: 'deleting',
+              percent: Math.min(95, 50 + Math.round((removedCount + 1) * 5)),
+              message: `Đang xóa sự kiện trùng: ${dup.summary || 'Sự kiện'}`
+            });
+          }
           await deleteGoogleEvent(token, dup.id, calendarId);
           removedCount++;
         } catch (e) {
@@ -781,6 +882,16 @@ export async function cleanCalendarDuplicates(token, calendarId = 'primary') {
         }
       }
     }
+  }
+
+  if (onProgress) {
+    onProgress({
+      phase: 'completed',
+      percent: 100,
+      scannedCount: events.length,
+      removedCount,
+      message: 'Dọn dẹp trùng lặp hoàn tất!'
+    });
   }
 
   return {

@@ -45,8 +45,134 @@ let state = {
   scheduleData: null,
   selectedWeekIndex: 0,
   theme: 'light',
-  lang: 'vi'
+  lang: 'vi',
+  lastSyncTimestamp: null,
+  lastSyncInfo: null
 };
+
+/**
+ * Formats a last sync timestamp with friendly date, time, and relative duration.
+ */
+function formatLastSyncTimestamp(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return null;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const hours = pad(d.getHours());
+  const minutes = pad(d.getMinutes());
+  const seconds = pad(d.getSeconds());
+  const day = pad(d.getDate());
+  const month = pad(d.getMonth() + 1);
+  const year = d.getFullYear();
+
+  const now = Date.now();
+  const diffSec = Math.max(0, Math.floor((now - d.getTime()) / 1000));
+
+  const isVi = getLang() === 'vi';
+  let relative = '';
+  if (diffSec < 45) {
+    relative = isVi ? '(vừa xong)' : '(just now)';
+  } else if (diffSec < 3600) {
+    const min = Math.floor(diffSec / 60);
+    relative = isVi ? `(${min} phút trước)` : `(${min}m ago)`;
+  } else if (diffSec < 86400) {
+    const hrs = Math.floor(diffSec / 3600);
+    relative = isVi ? `(${hrs} giờ trước)` : `(${hrs}h ago)`;
+  } else {
+    const days = Math.floor(diffSec / 86400);
+    relative = isVi ? `(${days} ngày trước)` : `(${days}d ago)`;
+  }
+
+  const timeStr = `${hours}:${minutes}:${seconds} • ${day}/${month}/${year}`;
+  return { timeStr, relative, rawDate: d };
+}
+
+/**
+ * Updates the Visual Status Indicator in the Sync tab:
+ * Shows pulsing status dot, formatted timestamp, relative duration, and execution details.
+ */
+function updateLastSyncIndicator(status = 'idle', timestamp = null, info = null) {
+  const dot = document.getElementById('sync_status_dot');
+  const pill = document.getElementById('sync_status_pill');
+  const timeDisplay = document.getElementById('last_sync_time_display');
+  const relativeDisplay = document.getElementById('last_sync_relative_display');
+  const metaDisplay = document.getElementById('last_sync_meta_display');
+
+  if (!dot || !pill || !timeDisplay) return;
+
+  const ts = timestamp || state.lastSyncTimestamp;
+  const syncInfo = info || state.lastSyncInfo;
+  const isVi = getLang() === 'vi';
+
+  if (status === 'syncing') {
+    dot.className = 'status-dot status-dot-syncing';
+    pill.className = 'badge badge-primary text-xs';
+    pill.textContent = isVi ? 'Đang đồng bộ...' : 'Syncing...';
+    timeDisplay.textContent = isVi ? 'Đang tiến hành đồng bộ với Google Calendar...' : 'Synchronizing with Google Calendar...';
+    if (relativeDisplay) relativeDisplay.textContent = '';
+    if (metaDisplay) {
+      metaDisplay.style.display = 'block';
+      metaDisplay.textContent = isVi ? 'Vui lòng giữ cửa sổ mở trong khi cập nhật lịch' : 'Please keep this window open while updating calendar';
+    }
+    return;
+  }
+
+  if (status === 'error') {
+    dot.className = 'status-dot status-dot-warning';
+    pill.className = 'badge badge-danger text-xs';
+    pill.textContent = isVi ? 'Lỗi đồng bộ' : 'Sync Error';
+    timeDisplay.textContent = isVi ? 'Lần đồng bộ gần nhất bị gián đoạn' : 'Last synchronization interrupted';
+    if (relativeDisplay) relativeDisplay.textContent = '';
+    if (metaDisplay) {
+      metaDisplay.style.display = 'block';
+      metaDisplay.textContent = isVi ? 'Kiểm tra lại kết nối Google Calendar hoặc Cổng Đào Tạo' : 'Check Google Calendar or Portal connection';
+    }
+    return;
+  }
+
+  // Idle / Completed
+  if (ts) {
+    const formatted = formatLastSyncTimestamp(ts);
+    dot.className = 'status-dot status-dot-success';
+    pill.className = 'badge badge-success text-xs';
+    pill.textContent = isVi ? 'Đã đồng bộ' : 'Synced';
+    
+    if (formatted) {
+      timeDisplay.textContent = formatted.timeStr;
+      if (relativeDisplay) relativeDisplay.textContent = formatted.relative;
+    } else {
+      timeDisplay.textContent = String(ts);
+      if (relativeDisplay) relativeDisplay.textContent = '';
+    }
+
+    if (metaDisplay && syncInfo) {
+      metaDisplay.style.display = 'block';
+      const scopeLabel = syncInfo.scope === 'semester' 
+        ? (isVi ? 'Cả học kỳ' : 'Semester') 
+        : syncInfo.scope === 'from_this_week' 
+          ? (isVi ? 'Từ tuần này' : 'From this week') 
+          : (isVi ? 'Tuần này' : 'This week');
+
+      if (syncInfo.insertedCount > 0 || syncInfo.updatedCount > 0) {
+        metaDisplay.textContent = isVi 
+          ? `✓ Đã thêm ${syncInfo.insertedCount}, cập nhật ${syncInfo.updatedCount} • ${syncInfo.total} tiết học (${scopeLabel})`
+          : `✓ Inserted ${syncInfo.insertedCount}, updated ${syncInfo.updatedCount} • ${syncInfo.total} classes (${scopeLabel})`;
+      } else {
+        metaDisplay.textContent = isVi
+          ? `✓ Tất cả ${syncInfo.total} tiết học đã khớp chuẩn • (${scopeLabel})`
+          : `✓ All ${syncInfo.total} classes up to date • (${scopeLabel})`;
+      }
+    }
+  } else {
+    dot.className = 'status-dot status-dot-idle';
+    pill.className = 'badge badge-neutral text-xs';
+    pill.textContent = isVi ? 'Chưa đồng bộ' : 'Not Synced';
+    timeDisplay.textContent = isVi ? 'Chưa có lịch sử đồng bộ thành công' : 'No successful synchronization recorded yet';
+    if (relativeDisplay) relativeDisplay.textContent = '';
+    if (metaDisplay) metaDisplay.style.display = 'none';
+  }
+}
 
 // Full-tab / Full-window detector
 function detectWindowMode() {
@@ -161,6 +287,15 @@ async function loadStoredPreferences() {
         const ver = (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || '1.2.0';
         const verTag = document.getElementById('app_version_tag');
         if (verTag) verTag.textContent = `v${ver}`;
+
+        // Restore last successful sync timestamp and details
+        if (res.lastSyncTimestamp) {
+          state.lastSyncTimestamp = res.lastSyncTimestamp;
+        }
+        if (res.lastSyncInfo) {
+          state.lastSyncInfo = res.lastSyncInfo;
+        }
+        updateLastSyncIndicator('idle', state.lastSyncTimestamp, state.lastSyncInfo);
       } catch (err) {
         console.warn('Error applying stored preferences:', err);
       }
@@ -179,7 +314,9 @@ async function loadStoredPreferences() {
           'studentProfile',
           'portalVerification',
           'cachedSchedule',
-          'semesterInfo'
+          'semesterInfo',
+          'lastSyncTimestamp',
+          'lastSyncInfo'
         ], applyData);
       } catch (e) {
         applyData({});
@@ -577,6 +714,10 @@ function switchView(viewId) {
   if (viewId === 'view_schedule' && !state.scheduleData) {
     loadScheduleData(false);
   }
+
+  if (viewId === 'view_sync') {
+    updateLastSyncIndicator('idle', state.lastSyncTimestamp, state.lastSyncInfo);
+  }
 }
 
 /**
@@ -585,6 +726,9 @@ function switchView(viewId) {
 function updateI18nLabels() {
   const current = getLang();
   state.lang = current;
+
+  // Refresh last sync indicator with the active language
+  updateLastSyncIndicator('idle', state.lastSyncTimestamp, state.lastSyncInfo);
 
   // Update all marked ui_ elements
   document.querySelectorAll('[id^="ui_"]').forEach(el => {
@@ -1042,14 +1186,31 @@ async function handleStartSync() {
 
   const statusBox = document.getElementById('sync_status_box');
   const progressBar = document.getElementById('sync_progress_bar');
+  const progressBarWrap = document.getElementById('sync_progress_bar_wrap');
+  const percentLabel = document.getElementById('sync_progress_percent');
   const statusHeader = document.getElementById('sync_status_header');
+  const stepDetail = document.getElementById('sync_progress_step_detail');
+  const counterLabel = document.getElementById('sync_progress_counter');
+  const spinnerIcon = document.getElementById('sync_spinner_icon');
   const logBox = document.getElementById('sync_details_log');
   const btn = document.getElementById('btn_start_sync_action');
 
   if (statusBox) statusBox.style.display = 'block';
-  if (progressBar) progressBar.style.width = '30%';
+  if (progressBar) {
+    progressBar.style.width = '6%';
+    progressBar.className = 'sync-progress-bar active';
+  }
+  if (progressBarWrap) progressBarWrap.setAttribute('aria-valuenow', '6');
+  if (percentLabel) percentLabel.textContent = '6%';
+  if (spinnerIcon) spinnerIcon.className = 'sync-spinner-icon spinning';
   if (statusHeader) statusHeader.textContent = t('syncing_in_progress');
+  if (stepDetail) stepDetail.textContent = t('sync_progress_preparing');
+  if (counterLabel) counterLabel.textContent = '0 / --';
+  if (logBox) logBox.innerHTML = '';
   if (btn) btn.disabled = true;
+
+  // Set visual status indicator to active syncing
+  updateLastSyncIndicator('syncing');
 
   try {
     const result = await syncScheduleToGoogleCalendar(
@@ -1058,12 +1219,44 @@ async function handleStartSync() {
       {
         scope,
         activeWeekIndex: state.selectedWeekIndex,
-        reinsertDeleted
+        reinsertDeleted,
+        onProgress: ({ phase, current, total, percent, subject, room, message }) => {
+          if (progressBar) {
+            progressBar.style.width = `${percent}%`;
+            if (progressBarWrap) progressBarWrap.setAttribute('aria-valuenow', String(percent));
+          }
+          if (percentLabel) percentLabel.textContent = `${percent}%`;
+          if (counterLabel && total > 0) counterLabel.textContent = `${current} / ${total}`;
+          if (stepDetail) {
+            if (message) {
+              stepDetail.textContent = message;
+            } else if (subject) {
+              stepDetail.textContent = `${subject}${room ? ` (${room})` : ''}`;
+            }
+          }
+          if (statusHeader && phase === 'syncing') {
+            statusHeader.textContent = `${t('syncing_in_progress')} (${percent}%)`;
+          }
+        }
       }
     );
 
-    if (progressBar) progressBar.style.width = '100%';
+    if (progressBar) {
+      progressBar.style.width = '100%';
+      progressBar.className = 'sync-progress-bar completed';
+      if (progressBarWrap) progressBarWrap.setAttribute('aria-valuenow', '100');
+    }
+    if (percentLabel) percentLabel.textContent = '100%';
+    if (spinnerIcon) spinnerIcon.className = 'sync-spinner-icon';
     if (statusHeader) statusHeader.textContent = t('sync_success');
+    if (stepDetail) {
+      stepDetail.textContent = getLang() === 'vi' 
+        ? `✓ Hoàn tất! Đã kiểm tra ${result.total} tiết học.` 
+        : `✓ Done! Checked ${result.total} classes.`;
+    }
+    if (counterLabel && result.total > 0) {
+      counterLabel.textContent = `${result.total} / ${result.total}`;
+    }
 
     // Update stats
     const elIns = document.getElementById('stat_inserted');
@@ -1086,8 +1279,28 @@ async function handleStartSync() {
         logBox.innerHTML = `<div>✓ Đã kiểm tra ${result.total} tiết học. Tất cả đã đồng bộ chính xác, không cần chèn trùng lặp.</div>`;
       }
     }
+
+    // Update state and visual status indicator
+    state.lastSyncTimestamp = result.timestamp || Date.now();
+    state.lastSyncInfo = result.syncInfo || {
+      timestamp: state.lastSyncTimestamp,
+      insertedCount: result.insertedCount,
+      updatedCount: result.updatedCount,
+      skippedCount: result.skippedCount,
+      clashesCount: result.clashesCount,
+      total: result.total,
+      scope
+    };
+    updateLastSyncIndicator('idle', state.lastSyncTimestamp, state.lastSyncInfo);
+
   } catch (err) {
+    if (progressBar) {
+      progressBar.className = 'sync-progress-bar';
+    }
+    if (spinnerIcon) spinnerIcon.className = 'sync-spinner-icon';
     if (statusHeader) statusHeader.textContent = `Lỗi đồng bộ: ${err.message}`;
+    if (stepDetail) stepDetail.textContent = 'Quá trình đồng bộ bị gián đoạn.';
+    updateLastSyncIndicator('error');
     console.error('Sync error:', err);
   } finally {
     if (btn) btn.disabled = false;
@@ -1104,20 +1317,40 @@ async function handleCleanDuplicates() {
   }
 
   const resultBox = document.getElementById('dedup_result_box');
+  const progressBox = document.getElementById('dedup_progress_box');
+  const progressBar = document.getElementById('dedup_progress_bar');
   const btn = document.getElementById('btn_clean_duplicates_action');
 
   if (resultBox) {
     resultBox.style.display = 'block';
     resultBox.textContent = t('dedup_scanning');
   }
+  if (progressBox) progressBox.style.display = 'block';
+  if (progressBar) {
+    progressBar.style.width = '20%';
+    progressBar.className = 'sync-progress-bar active';
+  }
   if (btn) btn.disabled = true;
 
   try {
-    const res = await cleanCalendarDuplicates(state.googleAccount.token);
+    const res = await cleanCalendarDuplicates(state.googleAccount.token, 'primary', {
+      onProgress: ({ percent, message }) => {
+        if (progressBar) progressBar.style.width = `${percent}%`;
+        if (resultBox && message) resultBox.textContent = message;
+      }
+    });
+    if (progressBar) {
+      progressBar.style.width = '100%';
+      progressBar.className = 'sync-progress-bar completed';
+      setTimeout(() => {
+        if (progressBox) progressBox.style.display = 'none';
+      }, 1800);
+    }
     if (resultBox) {
       resultBox.innerHTML = `✓ ${t('dedup_complete')}<br>Đã quét: <strong>${res.scannedCount}</strong> sự kiện • Đã xóa trùng lặp: <strong class="text-red">${res.removedCount}</strong> sự kiện dư thừa.`;
     }
   } catch (err) {
+    if (progressBar) progressBar.className = 'sync-progress-bar';
     if (resultBox) resultBox.textContent = `Lỗi dọn trùng lặp: ${err.message}`;
   } finally {
     if (btn) btn.disabled = false;
