@@ -4,7 +4,7 @@ A completely free, client-side browser extension to synchronize FTU class schedu
 
 ## Installation
 
-1. Download or clone this repository.
+1. Download or clone repository as a `.zip` file.
 2. Open your Chromium-based browser (Chrome, Edge, Brave, etc.).
 3. Navigate to the extensions page (`chrome://extensions` or `edge://extensions`).
 4. Enable **Developer Mode**.
