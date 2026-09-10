@@ -1,11 +1,32 @@
-<div align="center">
+# FTU Schedule Sync
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+A completely free, client-side browser extension to synchronize FTU class schedules with Google Calendar without relying on third-party servers.
 
-  <h1>Built with AI Studio</h2>
+## Installation
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+1. Download or clone this repository.
+2. Open your Chromium-based browser (Chrome, Edge, Brave, etc.).
+3. Navigate to the extensions page (`chrome://extensions` or `edge://extensions`).
+4. Enable **Developer Mode**.
+5. Click **Load unpacked** and select the directory containing this project (the root directory where `manifest.json` is located).
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Features
 
-</div>
+- **Direct API Sync**: Connects directly to `qldt.hcmc.ftu.edu.vn` to fetch the schedule. No intermediaries.
+- **Universal OAuth2**: Uses standard `launchWebAuthFlow` to support Edge, Brave, and other Chromium forks.
+- **Auto-Login**: Gracefully heals expired sessions by running a headless login routine in an offscreen document.
+- **Offline Fallback**: Drag and drop `Export_TKB.xlsx` to generate standard `.ics` calendar files.
+- **Theme Support & Localization**: English/Vietnamese toggles and Dark/Light mode support.
+
+## Development
+
+Run tests:
+```bash
+npm install
+npm run test:ui
+```
+
+Bump version:
+```bash
+npm run bump
+```

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FTU Schedule Sync</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body class="theme-light">
+    <!-- Inject mock in iframe if needed -->
+    <script>
+      if (!window.chrome || !window.chrome.runtime || !window.chrome.runtime.id) {
+        document.write('<script src="../mockChromeApis.js"><\/script>');
+      }
+    </script>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1 id="ui_title">FTU Schedule Sync</h1>
+            <div class="header-actions">
+                <button id="btn_toggle_accounts" class="icon-btn" title="Account Confirmation">👤</button>
+                <button id="btn_toggle_lang" class="icon-btn" title="Toggle Language">🌐</button>
+                <button id="btn_toggle_theme" class="icon-btn" title="Toggle Theme">🌓</button>
+            </div>
+        </header>
+
+        <!-- Extended Account Confirmation Card -->
+        <section class="card account-confirmation-card" id="account_menu_card">
+            <div class="card-header">
+                <div class="header-with-icon">
+                    <span class="section-icon">🔐</span>
+                    <h2 id="ui_account_menu">Confirmed Accounts</h2>
+                </div>
+                <button id="btn_collapse_accounts" class="btn-subtle text-sm">Hide ▲</button>
+            </div>
+            <div class="card-body" id="account_menu_body">
+                <!-- Google Account Detail Item -->
+                <div class="account-item" id="google_account_box">
+                    <div class="account-item-top">
+                        <div class="account-profile-info">
+                            <span class="account-type-icon">🇬</span>
+                            <div>
+                                <div class="account-title" id="ui_google_account">Google Account</div>
+                                <div class="account-email" id="google_user_email">Not connected</div>
+                                <div class="account-extra text-sm text-gray" id="google_user_name"></div>
+                            </div>
+                        </div>
+                        <span id="badge_google" class="badge badge-amber">Not Authorized</span>
+                    </div>
+                    <div class="account-actions">
+                        <button id="btn_google_auth" class="btn btn-primary btn-sm">Connect Google Account</button>
+                        <button id="btn_google_switch" class="btn btn-outline btn-sm" style="display:none;">Switch Account</button>
+                        <button id="btn_google_logout" class="btn btn-outline btn-sm" style="display:none;">Disconnect</button>
+                    </div>
+                </div>
+
+                <div class="account-divider"></div>
+
+                <!-- FTU Student Portal Detail Item -->
+                <div class="account-item" id="portal_account_box">
+                    <div class="account-item-top">
+                        <div class="account-profile-info">
+                            <span class="account-type-icon">🎓</span>
+                            <div>
+                                <div class="account-title" id="ui_portal_account">FTU Student Profile</div>
+                                <div class="account-email" id="portal_student_name">Not authenticated</div>
+                                <div class="account-subdetails text-sm" id="portal_student_details" style="display:none;">
+                                    <span id="portal_student_id_val">ID: 2415115057</span> • 
+                                    <span id="portal_student_email_val">k63.2415115057@ftu.edu.vn</span>
+                                </div>
+                            </div>
+                        </div>
+                        <span id="badge_portal" class="badge badge-red">Session Expired</span>
+                    </div>
+
+                    <!-- /tkb-tuan Verification Status Banner -->
+                    <div class="tkb-verification-banner" id="tkb_verification_banner">
+                        <div class="tkb-banner-title">
+                            <span id="tkb_status_icon">⏳</span>
+                            <span id="tkb_status_title">/tkb-tuan Verification</span>
+                            <span id="badge_tkb" class="badge badge-amber">Pending Check</span>
+                        </div>
+                        <p class="tkb-banner-desc text-sm" id="tkb_status_desc">
+                            Connection will only be confirmed successful once /tkb-tuan schedule data is accessed.
+                        </p>
+                    </div>
+
+                    <!-- Student Credentials (Nested inside FTU Student Card) -->
+                    <div class="portal-creds-nested-box" id="portal_creds_nested_box">
+                        <div class="nested-creds-header">
+                            <span class="nested-creds-title" id="ui_portal_credentials">Portal Credentials</span>
+                            <button id="btn_toggle_creds_view" class="btn-subtle text-sm">Edit</button>
+                        </div>
+                        <div class="nested-creds-body" id="creds_form_body" style="display:none;">
+                            <input type="text" id="input_student_id" placeholder="Student ID" class="input" value="">
+                            <input type="password" id="input_password" placeholder="Password" class="input" value="">
+                            <button id="btn_save_creds" class="btn btn-primary btn-sm" style="margin-top:4px; width:100%;">Save & Verify Connection</button>
+                        </div>
+                    </div>
+
+                    <div class="account-actions">
+                        <button id="btn_diagnostic" class="btn btn-outline btn-sm">Verify /tkb-tuan Now</button>
+                        <button id="btn_portal_logout" class="btn btn-outline btn-sm" style="display:none;">Log Out</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Google Calendar Week Sync Section -->
+        <section class="card" id="card_week_sync">
+            <div class="card-header">
+                <h2 id="ui_sync_week_title">Sync Week to Google Calendar</h2>
+                <span id="badge_sync_calendar" class="badge badge-primary">FTU Schedule</span>
+            </div>
+            <div class="card-body">
+                <div class="sync-controls" style="display:flex; flex-direction:column; gap:8px;">
+                    <div>
+                        <label class="text-xs text-gray font-medium uppercase" id="ui_label_select_week" style="display:block; margin-bottom:4px;">Select Week to Sync</label>
+                        <select id="select_sync_week" class="input" style="width:100%; cursor:pointer;">
+                            <option value="">Loading schedule weeks...</option>
+                        </select>
+                    </div>
+                    <button id="btn_sync_week_calendar" class="btn btn-primary" style="width:100%;">
+                        <span>📅 Sync Week to "FTU Schedule"</span>
+                    </button>
+                    <div id="sync_result_box" class="sync-result-box" style="display:none;">
+                        <div class="sync-result-header" id="sync_result_status"></div>
+                        <div class="sync-result-details text-xs text-gray" id="sync_result_details"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Today's Classes -->
+        <section class="card">
+            <div class="card-header">
+                <h2 id="ui_today_classes">Today's Classes</h2>
+                <span id="today_date_badge" class="badge badge-neutral">Today</span>
+            </div>
+            <div class="card-body" id="today_agenda">
+                <p id="ui_no_classes" class="text-sm text-gray">No classes today! 🎉</p>
+                <!-- Agenda items injected here -->
+            </div>
+        </section>
+
+        <!-- Manual Tools -->
+        <section class="card">
+            <div class="card-header">
+                <h2 id="ui_manual_tools">Manual Tools & ICS Export</h2>
+            </div>
+            <div class="card-body">
+                <div class="drop-zone" id="drop_zone">
+                    <p id="ui_drop_excel">Drop Export_TKB.xlsx here</p>
+                </div>
+                <button id="btn_export_semester" class="btn btn-outline" style="margin-top:8px; width:100%">Export Full Semester (.ics)</button>
+                <button id="btn_export_makeup" class="btn btn-outline" style="margin-top:8px; width:100%">Export Makeup Classes (.ics)</button>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span id="version_display">v1.0.4</span>
+        </footer>
+    </div>
+    
+    <!-- Dependencies -->
+    <script src="xlsx.mini.min.js"></script>
+    <script type="module" src="popup.js"></script>
+</body>
+</html>
