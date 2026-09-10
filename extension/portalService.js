@@ -135,7 +135,7 @@ const COMMON_HEADERS = (token) => ({
 
 /**
  * Fetch wrapper with automatic session recovery:
- * If FTU portal returns HTTP 401/403 or token invalid error,
+ * If FTU portal returns HTTP 401/403 or PSC JSON payload { code: 401, message: 'notallowed-' },
  * automatically re-authenticates with stored credentials and retries once.
  */
 async function fetchWithAutoRelogin(url, body, currentToken) {
@@ -146,9 +146,21 @@ async function fetchWithAutoRelogin(url, body, currentToken) {
     body: JSON.stringify(body)
   });
 
-  // If session was signed out by the system (HTTP 401 / 403), auto re-login and retry
-  if (res.status === 401 || res.status === 403) {
-    console.warn(`[Portal API] Received HTTP ${res.status} from ${url}. Session was signed out by system. Attempting automatic re-login...`);
+  // PSC Edusoft server can return HTTP 200 with { result: false, code: 401, message: 'notallowed-' }
+  let isUnauthorized = res.status === 401 || res.status === 403;
+  if (!isUnauthorized && res.ok) {
+    try {
+      const clone = res.clone();
+      const testJson = await clone.json();
+      if (testJson && (testJson.code === 401 || testJson.code === 403 || (testJson.result === false && String(testJson.message || '').includes('notallowed')))) {
+        isUnauthorized = true;
+      }
+    } catch (e) {}
+  }
+
+  // If session was signed out by the system, auto re-login and retry
+  if (isUnauthorized) {
+    console.warn(`[Portal API] Session expired or unauthorized for ${url}. Attempting automatic re-login...`);
     const session = await getSessionToken(true);
     if (session && session.success && session.token) {
       token = session.token;
@@ -169,7 +181,12 @@ export async function getActiveSemesterInfo(token) {
   if (!res.ok) throw new Error(`Failed to fetch semester info (HTTP ${res.status})`);
   const json = await res.json();
   const semData = json.data;
-  if (!semData) throw new Error('No semester data in response');
+  if (!semData) {
+    if (json.code === 401 || String(json.message).includes('notallowed')) {
+      throw new Error('Phiên đăng nhập Cổng Đào Tạo đã hết hạn. Vui lòng xác thực lại.');
+    }
+    throw new Error(json.message || 'Không tìm thấy dữ liệu học kỳ');
+  }
 
   const currentHk = semData.hoc_ky_theo_ngay_hien_tai;
   const list = Array.isArray(semData.ds_hoc_ky) ? semData.ds_hoc_ky : [];
@@ -198,8 +215,134 @@ export async function getSchedule(token, hoc_ky) {
 
   if (!res.ok) throw new Error(`Failed to fetch /tkb-tuan schedule (HTTP ${res.status})`);
   const data = await res.json();
-  if (!data.data) throw new Error('No schedule data returned from /tkb-tuan');
+  if (!data.data) {
+    if (data.code === 401 || String(data.message).includes('notallowed')) {
+      throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng kết nối lại tài khoản FTU.');
+    }
+    throw new Error(data.message || 'No schedule data returned from /tkb-tuan');
+  }
   return data.data;
+}
+
+/**
+ * Generates a realistic FTU semester schedule spanning 20 academic weeks.
+ * Used for development previews and offline fallback when student credentials aren't configured yet.
+ */
+export function generateDefaultFtuSchedule() {
+  const weeks = [];
+  const baseStart = new Date(2026, 8, 7); // Monday, September 7, 2026
+
+  const standardScheduleTemplate = [
+    {
+      ma_mon: 'ESP341',
+      ten_mon: 'Tiếng Anh thương mại 1',
+      ma_lop: 'ESP341.1_LT',
+      ten_lop: 'K62.KDQT',
+      ma_phong: 'B301',
+      ten_giang_vien: 'ThS. Nguyễn Thu Hằng',
+      dayOfWeekOffset: 0, // Thứ 2
+      tiet_bat_dau: 1,
+      so_tiet: 3
+    },
+    {
+      ma_mon: 'TMA408',
+      ten_mon: 'Thanh toán Quốc tế',
+      ma_lop: 'TMA408.2_LT',
+      ten_lop: 'K62.TCDN',
+      ma_phong: 'B205',
+      ten_giang_vien: 'PGS.TS Trần Thị Phương',
+      dayOfWeekOffset: 2, // Thứ 4
+      tiet_bat_dau: 7,
+      so_tiet: 3
+    },
+    {
+      ma_mon: 'KTE306',
+      ten_mon: 'Kinh tế lượng',
+      ma_lop: 'KTE306.4_LT',
+      ten_lop: 'K62.KTQT',
+      ma_phong: 'A204',
+      ten_giang_vien: 'TS. Lê Hoàng Phúc',
+      dayOfWeekOffset: 3, // Thứ 5
+      tiet_bat_dau: 4,
+      so_tiet: 3
+    },
+    {
+      ma_mon: 'MKT401',
+      ten_mon: 'Marketing Quốc tế',
+      ma_lop: 'MKT401.1_LT',
+      ten_lop: 'K62.KDQT',
+      ma_phong: 'B102',
+      ten_giang_vien: 'ThS. Phạm Thu Trang',
+      dayOfWeekOffset: 4, // Thứ 6
+      tiet_bat_dau: 1,
+      so_tiet: 3
+    }
+  ];
+
+  for (let w = 0; w < 20; w++) {
+    const weekStart = new Date(baseStart.getFullYear(), baseStart.getMonth(), baseStart.getDate() + w * 7);
+    const weekEnd = new Date(baseStart.getFullYear(), baseStart.getMonth(), baseStart.getDate() + w * 7 + 6);
+    const pad = (n) => String(n).padStart(2, '0');
+
+    const startIso = `${weekStart.getFullYear()}-${pad(weekStart.getMonth() + 1)}-${pad(weekStart.getDate())}T00:00:00`;
+    const endIso = `${weekEnd.getFullYear()}-${pad(weekEnd.getMonth() + 1)}-${pad(weekEnd.getDate())}T23:59:59`;
+
+    const weekClasses = [];
+
+    standardScheduleTemplate.forEach((tpl, idx) => {
+      const classDate = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + tpl.dayOfWeekOffset);
+      const classDateIso = `${classDate.getFullYear()}-${pad(classDate.getMonth() + 1)}-${pad(classDate.getDate())}T00:00:00`;
+
+      weekClasses.push({
+        id_tkb: 100000 + w * 100 + idx,
+        ma_mon: tpl.ma_mon,
+        ten_mon: tpl.ten_mon,
+        ma_lop: tpl.ma_lop,
+        ten_lop: tpl.ten_lop,
+        ma_phong: tpl.ma_phong,
+        ten_giang_vien: tpl.ten_giang_vien,
+        ngay_hoc: classDateIso,
+        tiet_bat_dau: tpl.tiet_bat_dau,
+        so_tiet: tpl.so_tiet,
+        is_day_bu: false,
+        ghi_chu: ''
+      });
+    });
+
+    // Add a makeup class in Week 2 and Week 5
+    if (w === 1 || w === 4) {
+      const makeupDate = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 5); // Saturday
+      const makeupDateIso = `${makeupDate.getFullYear()}-${pad(makeupDate.getMonth() + 1)}-${pad(makeupDate.getDate())}T00:00:00`;
+      weekClasses.push({
+        id_tkb: 200000 + w * 100,
+        ma_mon: 'TMA408',
+        ten_mon: 'Thanh toán Quốc tế (Dạy bù)',
+        ma_lop: 'TMA408.2_LT',
+        ten_lop: 'K62.TCDN',
+        ma_phong: 'B205',
+        ten_giang_vien: 'PGS.TS Trần Thị Phương',
+        ngay_hoc: makeupDateIso,
+        tiet_bat_dau: 7,
+        so_tiet: 3,
+        is_day_bu: true,
+        ghi_chu: 'Dạy bù theo kế hoạch khoa'
+      });
+    }
+
+    weeks.push({
+      id_tuan: w + 1,
+      tuan_hoc_ky: w + 1,
+      ten_tuan: `Tuần ${w + 1}`,
+      ngay_bat_dau: startIso,
+      ngay_ket_thuc: endIso,
+      ds_thoi_khoa_bieu: weekClasses
+    });
+  }
+
+  return {
+    ds_tuan_tkb: weeks,
+    hoc_ky: 20261
+  };
 }
 
 /**

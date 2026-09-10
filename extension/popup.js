@@ -5,7 +5,8 @@ import {
   verifyPortalAccess, 
   savePortalCredentials, 
   getStoredPortalCredentials,
-  portalLogin
+  portalLogin,
+  generateDefaultFtuSchedule
 } from './portalService.js';
 
 import { 
@@ -47,9 +48,26 @@ let state = {
   lang: 'vi'
 };
 
+// Full-tab / Full-window detector
+function detectWindowMode() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const isFullParam = urlParams.get('mode') === 'full';
+  const isStandAloneWindow = window.self === window.top && window.innerWidth > 450;
+
+  if (isFullParam || isStandAloneWindow) {
+    document.documentElement.classList.add('full-window-mode');
+    document.body.classList.add('full-window-mode');
+    document.documentElement.style.width = '100%';
+    document.documentElement.style.height = '100%';
+    document.body.style.width = '100%';
+    document.body.style.height = '100%';
+  }
+}
+
 // Initial entry point with document.readyState check (fixes module deferral race condition)
 async function initApp() {
   console.log('[FTU Sync] Initializing popup application...');
+  detectWindowMode();
   // 1. Immediately bind UI events so tabs and buttons are 100% interactive without waiting for network/storage
   try {
     bindUIEvents();
@@ -110,6 +128,20 @@ async function loadStoredPreferences() {
         if (res.studentProfile) state.portalProfile = res.studentProfile;
         if (res.portalVerification) state.portalVerification = res.portalVerification;
 
+        // Restore cached schedule if available so UI renders immediately
+        if (res.cachedSchedule && res.cachedSchedule.ds_tuan_tkb) {
+          state.scheduleData = res.cachedSchedule;
+          if (res.semesterInfo) state.semesterInfo = res.semesterInfo;
+          const chip = document.getElementById('active_semester_chip');
+          if (chip && state.semesterInfo) {
+            chip.textContent = state.semesterInfo.ten_hoc_ky || `HK ${state.semesterInfo.hoc_ky}`;
+          }
+          renderTodayView();
+          populateWeekSelector();
+          renderWeekView(state.selectedWeekIndex);
+          updateVerificationUI(true);
+        }
+
         // Auto sync UI setup
         const autoSyncToggle = document.getElementById('toggle_auto_sync');
         const autoSyncSection = document.getElementById('auto_sync_config_section');
@@ -126,7 +158,7 @@ async function loadStoredPreferences() {
         if (groupDay) groupDay.style.display = res.autoSyncFreq === 'weekly' ? 'block' : 'none';
 
         // App version tag
-        const ver = (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || '1.1.1';
+        const ver = (typeof chrome !== 'undefined' && chrome.runtime?.getManifest?.()?.version) || '1.2.0';
         const verTag = document.getElementById('app_version_tag');
         if (verTag) verTag.textContent = `v${ver}`;
       } catch (err) {
@@ -145,7 +177,9 @@ async function loadStoredPreferences() {
           'autoSyncDay', 
           'autoSyncTime',
           'studentProfile',
-          'portalVerification'
+          'portalVerification',
+          'cachedSchedule',
+          'semesterInfo'
         ], applyData);
       } catch (e) {
         applyData({});
@@ -213,44 +247,104 @@ async function runInitialConnectionCheck() {
 
     // Route fallback to Accounts tab
     switchView('view_accounts');
+    await loadScheduleData(false);
   } else {
     // Happy path: Route to Schedule tab
     if (routeBanner) routeBanner.style.display = 'none';
     if (accountsBadge) accountsBadge.style.display = 'none';
     switchView('view_schedule');
-    await loadScheduleData();
+    await loadScheduleData(false);
   }
 }
 
 /**
  * Loads and caches the active semester schedule from Portal REST APIs.
+ * Automatically handles cached data, live re-login, and demo fallback.
  */
-async function loadScheduleData() {
-  if (!state.portalToken) return;
+async function loadScheduleData(forceRefresh = false) {
+  const weekSelect = document.getElementById('select_week_dropdown');
+  if (weekSelect && (!state.scheduleData || forceRefresh)) {
+    weekSelect.innerHTML = `<option value="-1">⏳ ${t('loading_schedule') || 'Đang tải lịch học từ FTU...'}</option>`;
+  }
 
+  // 1. Try to restore from cachedSchedule first if not forcing refresh
+  if (!forceRefresh && !state.scheduleData) {
+    const cached = await new Promise(resolve => {
+      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        chrome.storage.local.get(['cachedSchedule', 'semesterInfo'], resolve);
+      } else {
+        resolve({});
+      }
+    });
+
+    if (cached.cachedSchedule && cached.cachedSchedule.ds_tuan_tkb) {
+      state.scheduleData = cached.cachedSchedule;
+      if (cached.semesterInfo) state.semesterInfo = cached.semesterInfo;
+      const chip = document.getElementById('active_semester_chip');
+      if (chip && state.semesterInfo) {
+        chip.textContent = state.semesterInfo.ten_hoc_ky || `HK ${state.semesterInfo.hoc_ky}`;
+      }
+      renderTodayView();
+      populateWeekSelector();
+      renderWeekView(state.selectedWeekIndex);
+      updateVerificationUI(true);
+      return;
+    }
+  }
+
+  // 2. Fetch fresh from portal API
   try {
-    // 1. Get active semester
-    state.semesterInfo = await getActiveSemesterInfo(state.portalToken);
-    const chip = document.getElementById('active_semester_chip');
-    if (chip && state.semesterInfo) {
-      chip.textContent = state.semesterInfo.ten_hoc_ky || `HK ${state.semesterInfo.hoc_ky}`;
+    let token = state.portalToken;
+    if (!token) {
+      const session = await getSessionToken(false);
+      if (session && session.success && session.token) {
+        state.portalToken = session.token;
+        token = session.token;
+        state.portalProfile = session.profile || state.portalProfile;
+        updateAccountCardsUI(Boolean(state.googleAccount), true);
+        renderConnectionIndicators(state.googleAccount ? 'ok' : 'err', 'ok');
+      }
     }
 
-    // 2. Fetch timetable
-    state.scheduleData = await getSchedule(state.portalToken, state.semesterInfo.hoc_ky);
-    
-    // 3. Mark verification verified
-    state.portalVerification = { verified: true, verifiedAt: new Date().toISOString() };
-    chrome.storage.local.set({ portalVerification: state.portalVerification });
+    if (token) {
+      state.semesterInfo = await getActiveSemesterInfo(token);
+      const chip = document.getElementById('active_semester_chip');
+      if (chip && state.semesterInfo) {
+        chip.textContent = state.semesterInfo.ten_hoc_ky || `HK ${state.semesterInfo.hoc_ky}`;
+      }
 
-    // Render schedule views
+      state.scheduleData = await getSchedule(token, state.semesterInfo.hoc_ky);
+      state.portalVerification = { verified: true, verifiedAt: new Date().toISOString() };
+
+      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        chrome.storage.local.set({
+          portalVerification: state.portalVerification,
+          cachedSchedule: state.scheduleData,
+          semesterInfo: state.semesterInfo
+        });
+      }
+
+      renderTodayView();
+      populateWeekSelector();
+      renderWeekView(state.selectedWeekIndex);
+      updateVerificationUI(true);
+      return;
+    }
+  } catch (err) {
+    console.warn('Error loading schedule data:', err);
+    updateVerificationUI(false);
+  }
+
+  // 3. Fallback: If no live data and no cache (e.g. preview mode or first run without credentials)
+  if (!state.scheduleData || !state.scheduleData.ds_tuan_tkb) {
+    state.scheduleData = generateDefaultFtuSchedule();
+    state.semesterInfo = { hoc_ky: 20261, ten_hoc_ky: 'Học kỳ 1 (2026 - 2027)' };
+    const chip = document.getElementById('active_semester_chip');
+    if (chip) chip.textContent = state.semesterInfo.ten_hoc_ky;
+
     renderTodayView();
     populateWeekSelector();
     renderWeekView(state.selectedWeekIndex);
-    updateVerificationUI(true);
-  } catch (err) {
-    console.error('Error loading schedule data:', err);
-    updateVerificationUI(false);
   }
 }
 
@@ -356,11 +450,12 @@ function populateWeekSelector() {
     const startStr = (week.ngay_bat_dau || '').split('T')[0];
     const endStr = (week.ngay_ket_thuc || '').split('T')[0];
     
-    // Check if current date falls within this week
+    // Check if current date falls within this week using local dates
     if (startStr && endStr) {
-      const s = new Date(startStr);
-      const e = new Date(endStr);
-      e.setHours(23, 59, 59, 999);
+      const [sy, sm, sd] = startStr.split('-').map(Number);
+      const [ey, em, ed] = endStr.split('-').map(Number);
+      const s = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+      const e = new Date(ey, em - 1, ed, 23, 59, 59, 999);
       if (now >= s && now <= e) {
         defaultIdx = idx;
       }
@@ -396,7 +491,12 @@ function updateWeekSubtitle(idx) {
  */
 function renderWeekView(weekIndex) {
   const container = document.getElementById('week_days_vertical_container');
-  if (!container || !state.scheduleData?.ds_tuan_tkb?.[weekIndex]) return;
+  if (!container) return;
+  
+  if (!state.scheduleData?.ds_tuan_tkb?.[weekIndex]) {
+    container.innerHTML = `<div class="card text-xs text-muted" style="padding:12px; text-align:center;">${t('no_classes_in_week')}</div>`;
+    return;
+  }
 
   container.innerHTML = '';
   const week = state.scheduleData.ds_tuan_tkb[weekIndex];
@@ -407,9 +507,13 @@ function renderWeekView(weekIndex) {
   const dayNamesEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const isEn = getLang() === 'en';
 
-  // Build 7 calendar days starting from week's ngay_bat_dau
+  // Build 7 calendar days starting from week's ngay_bat_dau in local date
   const startDateStr = (week.ngay_bat_dau || '').split('T')[0];
-  const startDate = startDateStr ? new Date(startDateStr) : new Date();
+  let startDate = new Date();
+  if (startDateStr) {
+    const [sy, sm, sd] = startDateStr.split('-').map(Number);
+    startDate = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+  }
 
   for (let i = 0; i < 7; i++) {
     const curDate = new Date(startDate);
@@ -469,6 +573,10 @@ function switchView(viewId) {
   document.querySelectorAll('.tab-view').forEach(view => {
     view.classList.toggle('active', view.id === viewId);
   });
+
+  if (viewId === 'view_schedule' && !state.scheduleData) {
+    loadScheduleData(false);
+  }
 }
 
 /**
@@ -620,7 +728,28 @@ function bindUIEvents() {
     btn.onclick = () => switchView(btn.dataset.view);
   });
 
-  // Theme & Lang Quick Buttons
+  // Theme & Lang Quick Buttons & Expand Full Window Button
+  const btnOpenTab = document.getElementById('btn_open_tab');
+  if (btnOpenTab) {
+    btnOpenTab.onclick = () => {
+      const isFull = document.body.classList.contains('full-window-mode');
+      if (isFull) {
+        document.documentElement.classList.remove('full-window-mode');
+        document.body.classList.remove('full-window-mode');
+        document.documentElement.style.width = '390px';
+        document.documentElement.style.height = '590px';
+        document.body.style.width = '390px';
+        document.body.style.height = '590px';
+      } else {
+        if (typeof chrome !== 'undefined' && chrome.tabs && typeof chrome.tabs.create === 'function') {
+          chrome.tabs.create({ url: chrome.runtime.getURL('extension/popup.html?mode=full') });
+        } else {
+          window.open('extension/popup.html?mode=full', '_blank');
+        }
+      }
+    };
+  }
+
   const btnLang = document.getElementById('btn_toggle_lang');
   if (btnLang) {
     btnLang.onclick = () => {
@@ -652,12 +781,18 @@ function bindUIEvents() {
       state.scheduleSubView = 'day';
     };
 
-    btnWeek.onclick = () => {
+    btnWeek.onclick = async () => {
       btnWeek.classList.add('active');
       btnDay.classList.remove('active');
       if (subDay) subDay.style.display = 'none';
       if (subWeek) subWeek.style.display = 'block';
       state.scheduleSubView = 'week';
+      if (!state.scheduleData) {
+        await loadScheduleData(false);
+      } else {
+        populateWeekSelector();
+        renderWeekView(state.selectedWeekIndex);
+      }
     };
   }
 
@@ -666,17 +801,32 @@ function bindUIEvents() {
   if (btnRefreshToday) {
     btnRefreshToday.onclick = async () => {
       btnRefreshToday.textContent = 'Đang tải...';
-      await loadScheduleData();
-      btnRefreshToday.textContent = '🔄 Làm mới';
+      await loadScheduleData(true);
+      btnRefreshToday.textContent = t('refresh_today') || '🔄 Làm mới';
+    };
+  }
+
+  // Refresh Week button
+  const btnRefreshWeek = document.getElementById('btn_refresh_week');
+  if (btnRefreshWeek) {
+    btnRefreshWeek.onclick = async () => {
+      const origHtml = btnRefreshWeek.innerHTML;
+      btnRefreshWeek.textContent = 'Đang tải...';
+      await loadScheduleData(true);
+      btnRefreshWeek.innerHTML = origHtml;
     };
   }
 
   // Week Selector Dropdown
   const weekSelect = document.getElementById('select_week_dropdown');
   if (weekSelect) {
-    weekSelect.onchange = (e) => {
+    weekSelect.onchange = async (e) => {
       const idx = parseInt(e.target.value, 10);
+      if (isNaN(idx) || idx < 0) return;
       state.selectedWeekIndex = idx;
+      if (!state.scheduleData) {
+        await loadScheduleData(false);
+      }
       updateWeekSubtitle(idx);
       renderWeekView(idx);
     };
@@ -854,6 +1004,19 @@ function bindUIEvents() {
       }
     };
   }
+
+  // External Wiki, TOS & Privacy Links
+  document.querySelectorAll('.about-link-row').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const url = link.getAttribute('href') || 'https://github.com/Merz26/ftuschedule/wiki';
+      if (typeof chrome !== 'undefined' && chrome.tabs && typeof chrome.tabs.create === 'function') {
+        chrome.tabs.create({ url });
+      } else {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+    });
+  });
 }
 
 /**
@@ -874,6 +1037,8 @@ async function handleStartSync() {
 
   const scopeSelect = document.getElementById('select_sync_scope');
   const scope = scopeSelect ? scopeSelect.value : 'this_week';
+  const checkResync = document.getElementById('check_resync_deleted');
+  const reinsertDeleted = checkResync ? checkResync.checked : true;
 
   const statusBox = document.getElementById('sync_status_box');
   const progressBar = document.getElementById('sync_progress_bar');
@@ -892,7 +1057,8 @@ async function handleStartSync() {
       state.scheduleData,
       {
         scope,
-        activeWeekIndex: state.selectedWeekIndex
+        activeWeekIndex: state.selectedWeekIndex,
+        reinsertDeleted
       }
     );
 

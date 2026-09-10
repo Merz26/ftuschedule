@@ -300,6 +300,25 @@ export async function getOrCreateFtuCalendar(token) {
     }
   });
 
+  // Verify whether cached calendar still exists and is accessible
+  if (cachedCalId && cachedCalId !== 'primary') {
+    try {
+      const checkRes = await calendarApiFetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cachedCalId)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (checkRes.ok) {
+        return { calendarId: cachedCalId, calendarName: 'FTU Schedule', isSecondary: true };
+      } else {
+        console.warn('[Google Calendar] Cached calendar ID is no longer valid or was deleted. Clearing cached ID.');
+        if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+          chrome.storage.local.remove(['ftuCalendarId']);
+        }
+      }
+    } catch (e) {
+      console.warn('[Google Calendar] Error checking cached calendar:', e);
+    }
+  }
+
   try {
     const listRes = await calendarApiFetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -340,7 +359,7 @@ export async function getOrCreateFtuCalendar(token) {
     console.warn('[Google Calendar] Secondary calendar creation failed. Falling back to primary:', err);
   }
 
-  return { calendarId: cachedCalId || 'primary', calendarName: 'Primary (FTU Schedule)', isSecondary: false };
+  return { calendarId: 'primary', calendarName: 'Primary (FTU Schedule)', isSecondary: false };
 }
 
 export async function fetchGoogleEvents(token, timeMin, timeMax, calendarId = 'primary') {
@@ -350,7 +369,8 @@ export async function fetchGoogleEvents(token, timeMin, timeMax, calendarId = 'p
   });
   if (!res.ok) throw new Error(`Failed to fetch events from calendar (HTTP ${res.status})`);
   const data = await res.json();
-  return data.items || [];
+  // Filter out any deleted / cancelled events so items removed from calendar can be re-synced!
+  return (data.items || []).filter(ev => ev && ev.status !== 'cancelled');
 }
 
 export async function patchGoogleEvent(token, eventId, patchData, calendarId = 'primary') {
@@ -419,8 +439,9 @@ export function extractCourseCode(text) {
 }
 
 /**
- * Pre-Insert Deduplication Engine with Strict Overwrite & Clash Prevention
+ * Pre-Insert Deduplication Engine with Strict Overwrite & Clash Prevention.
  * Matches candidate class against existing Google Calendar events.
+ * Ignores any cancelled or deleted events so removed items can be re-synced!
  */
 export function findMatchingCalendarEvent(candidate, existingEvents) {
   const { dateStr, startTimeStr, endTimeStr, courseCode, id_tkb, summary } = candidate;
@@ -432,6 +453,9 @@ export function findMatchingCalendarEvent(candidate, existingEvents) {
   let clashEvent = null;
 
   for (const ev of existingEvents) {
+    // If an event was deleted/cancelled in Google Calendar, it MUST NOT match!
+    if (!ev || ev.status === 'cancelled') continue;
+
     const evStartRaw = ev.start?.dateTime || ev.start?.date || '';
     const evEndRaw = ev.end?.dateTime || ev.end?.date || '';
     const evDate = evStartRaw.split('T')[0];
@@ -455,7 +479,7 @@ export function findMatchingCalendarEvent(candidate, existingEvents) {
       evEndMin = timeStringToMinutes(timePart);
     }
 
-    // Overlapping shift condition (shift times overlap or are within 30 min window)
+    // Overlapping shift condition (shift times overlap or are within 35 min window)
     const timesOverlap = Math.max(candStartMin, evStartMin) < Math.min(candEndMin, evEndMin) ||
                          Math.abs(candStartMin - evStartMin) <= 35;
 
@@ -471,8 +495,8 @@ export function findMatchingCalendarEvent(candidate, existingEvents) {
       break;
     }
 
-    // Match 3: Matching summary string or course code in summary
-    if (courseCode && (ev.summary || '').toUpperCase().includes(courseCode.toUpperCase()) && timesOverlap) {
+    // Match 3: Matching summary string with valid course code
+    if (courseCode && courseCode.length >= 3 && (ev.summary || '').toUpperCase().includes(courseCode.toUpperCase()) && timesOverlap) {
       codeMatch = ev;
       break;
     }

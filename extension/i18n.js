@@ -24,6 +24,8 @@ export const dict = {
     refresh_today: "🔄 Refresh",
     no_classes_today: "No classes today! 🎉",
     select_week: "Select Week",
+    btn_refresh_week: "Fetch Schedule",
+    loading_schedule: "Loading schedule from FTU...",
     loading_weeks: "Loading weeks list...",
     expand_all: "Expand All",
     collapse_all: "Collapse All",
@@ -50,6 +52,7 @@ export const dict = {
     sync_scope_this_week: "Sync this week (Active 7 days)",
     sync_scope_from_this_week: "Sync from this week to end of semester",
     sync_scope_semester: "Sync entire semester schedule",
+    resync_deleted_label: "Auto re-sync classes deleted from Google Calendar",
     btn_start_sync: "Start Synchronization",
     syncing_in_progress: "Synchronizing with Google Calendar...",
     sync_success: "Synchronization complete!",
@@ -141,7 +144,13 @@ export const dict = {
     excel_imported: "Excel schedule parsed successfully!",
 
     about_title: "About & Privacy",
-    privacy_notice: "This extension operates 100% on your device. Your student credentials and schedule tokens are stored exclusively in your local browser and never transmitted to any external third-party server."
+    privacy_notice: "This extension operates 100% on your device. Your student credentials and schedule tokens are stored exclusively in your local browser and never transmitted to any external third-party server.",
+    link_wiki_title: "Wiki & Documentation",
+    link_wiki_desc: "User guide, FAQ & GitHub repository",
+    link_tos_title: "Terms of Service (TOS)",
+    link_tos_desc: "Usage guidelines & legal terms",
+    link_privacy_title: "Privacy Policy",
+    link_privacy_desc: "100% local client-side security promise"
   },
 
   vi: {
@@ -169,6 +178,8 @@ export const dict = {
     refresh_today: "🔄 Làm mới",
     no_classes_today: "Hôm nay không có tiết học nào! 🎉",
     select_week: "Chọn tuần học",
+    btn_refresh_week: "Tải lịch",
+    loading_schedule: "Đang tải lịch học từ FTU...",
     loading_weeks: "Đang tải danh sách tuần...",
     expand_all: "Mở tất cả",
     collapse_all: "Thu gọn",
@@ -195,6 +206,7 @@ export const dict = {
     sync_scope_this_week: "Đồng bộ tuần này (7 ngày hiện tại)",
     sync_scope_from_this_week: "Đồng bộ từ tuần này đến hết học kỳ",
     sync_scope_semester: "Đồng bộ cả học kỳ",
+    resync_deleted_label: "Tự động đồng bộ lại các tiết học đã bị xóa trên Calendar",
     btn_start_sync: "Bắt đầu Đồng bộ",
     syncing_in_progress: "Đang đồng bộ với Google Calendar...",
     sync_success: "Đồng bộ hoàn tất thành công!",
@@ -286,7 +298,13 @@ export const dict = {
     excel_imported: "Đã đọc file Excel thời khóa biểu thành công!",
 
     about_title: "Thông tin & Quyền riêng tư",
-    privacy_notice: "Tiện ích hoạt động 100% trên thiết bị của bạn. Thông tin đăng nhập và dữ liệu lịch được lưu an toàn trong trình duyệt và không bao giờ gửi tới bất kỳ máy chủ trung gian nào."
+    privacy_notice: "Tiện ích hoạt động 100% trên thiết bị của bạn. Thông tin đăng nhập và dữ liệu lịch được lưu an toàn trong trình duyệt và không bao giờ gửi tới bất kỳ máy chủ trung gian nào.",
+    link_wiki_title: "Wiki & Hướng dẫn sử dụng",
+    link_wiki_desc: "Tài liệu hướng dẫn, FAQ & mã nguồn GitHub",
+    link_tos_title: "Điều khoản dịch vụ (TOS)",
+    link_tos_desc: "Quy định sử dụng & miễn trừ trách nhiệm",
+    link_privacy_title: "Chính sách bảo mật",
+    link_privacy_desc: "Cam kết bảo mật 100% dữ liệu cục bộ"
   }
 };
 
