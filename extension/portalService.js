@@ -180,16 +180,16 @@ export async function getActiveSemesterInfo(token) {
   const { res } = await fetchWithAutoRelogin(`${BASE_URL}/api/sch/w-locdshockytkbuser`, {}, token);
   if (!res.ok) throw new Error(`Failed to fetch semester info (HTTP ${res.status})`);
   const json = await res.json();
-  const semData = json.data;
+  const semData = json.data || json;
   if (!semData) {
-    if (json.code === 401 || String(json.message).includes('notallowed')) {
+    if (json.code === 401 || String(json.message || '').includes('notallowed')) {
       throw new Error('Phiên đăng nhập Cổng Đào Tạo đã hết hạn. Vui lòng xác thực lại.');
     }
     throw new Error(json.message || 'Không tìm thấy dữ liệu học kỳ');
   }
 
-  const currentHk = semData.hoc_ky_theo_ngay_hien_tai;
-  const list = Array.isArray(semData.ds_hoc_ky) ? semData.ds_hoc_ky : [];
+  const currentHk = semData.hoc_ky_theo_ngay_hien_tai || semData.hoc_ky || 20261;
+  const list = Array.isArray(semData.ds_hoc_ky) ? semData.ds_hoc_ky : (Array.isArray(semData.list_hoc_ky) ? semData.list_hoc_ky : []);
   
   let found = list.find(hk => hk.hoc_ky === currentHk);
   if (!found && list.length > 0) {
@@ -215,13 +215,30 @@ export async function getSchedule(token, hoc_ky) {
 
   if (!res.ok) throw new Error(`Failed to fetch /tkb-tuan schedule (HTTP ${res.status})`);
   const data = await res.json();
-  if (!data.data) {
-    if (data.code === 401 || String(data.message).includes('notallowed')) {
+  const scheduleObj = data.data || data;
+  if (!scheduleObj) {
+    if (data.code === 401 || String(data.message || '').includes('notallowed')) {
       throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng kết nối lại tài khoản FTU.');
     }
     throw new Error(data.message || 'No schedule data returned from /tkb-tuan');
   }
-  return data.data;
+
+  if (!scheduleObj.ds_tuan_tkb && scheduleObj.ds_tuan) {
+    scheduleObj.ds_tuan_tkb = scheduleObj.ds_tuan;
+  }
+  if (!scheduleObj.ds_tuan_tkb && scheduleObj.list_tuan) {
+    scheduleObj.ds_tuan_tkb = scheduleObj.list_tuan;
+  }
+
+  if (Array.isArray(scheduleObj.ds_tuan_tkb)) {
+    scheduleObj.ds_tuan_tkb.forEach(week => {
+      if (!week.ngay_bat_dau) week.ngay_bat_dau = week.ngay_bd || week.tu_ngay || '';
+      if (!week.ngay_ket_thuc) week.ngay_ket_thuc = week.ngay_kt || week.den_ngay || '';
+      if (!week.ds_thoi_khoa_bieu) week.ds_thoi_khoa_bieu = week.ds_tkb || week.tkb || [];
+    });
+  }
+
+  return scheduleObj;
 }
 
 /**

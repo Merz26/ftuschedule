@@ -574,6 +574,40 @@ function createClassCard(item) {
 /**
  * Populates the Week Selector Dropdown in Week View.
  */
+function parseDate(dateStr) {
+  if (!dateStr) return null;
+  const clean = String(dateStr).split('T')[0];
+  if (clean.includes('/')) {
+    const parts = clean.split('/').map(Number);
+    if (parts.length === 3) {
+      return new Date(parts[2], parts[1] - 1, parts[0], 0, 0, 0, 0);
+    }
+  } else if (clean.includes('-')) {
+    const parts = clean.split('-').map(Number);
+    if (parts.length === 3) {
+      return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+    }
+  }
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return '';
+  const clean = String(dateStr).split('T')[0];
+  if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length === 3) return `${parts[0]}/${parts[1]}/${parts[2]}`;
+  } else if (clean.includes('-')) {
+    const parts = clean.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+}
+
+/**
+ * Populates the Week Selector Dropdown in Week View and defaults to the current week.
+ */
 function populateWeekSelector() {
   const select = document.getElementById('select_week_dropdown');
   if (!select || !state.scheduleData || !state.scheduleData.ds_tuan_tkb) return;
@@ -581,20 +615,29 @@ function populateWeekSelector() {
   select.innerHTML = '';
   const weeks = state.scheduleData.ds_tuan_tkb;
   const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
   let defaultIdx = 0;
+  let minDiff = Infinity;
 
   weeks.forEach((week, idx) => {
-    const startStr = (week.ngay_bat_dau || '').split('T')[0];
-    const endStr = (week.ngay_ket_thuc || '').split('T')[0];
+    const rawStart = week.ngay_bat_dau || week.ngay_bd || week.tu_ngay || '';
+    const rawEnd = week.ngay_ket_thuc || week.ngay_kt || week.den_ngay || '';
+    const startStr = String(rawStart).split('T')[0];
+    const endStr = String(rawEnd).split('T')[0];
     
-    // Check if current date falls within this week using local dates
-    if (startStr && endStr) {
-      const [sy, sm, sd] = startStr.split('-').map(Number);
-      const [ey, em, ed] = endStr.split('-').map(Number);
-      const s = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
-      const e = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+    const s = parseDate(startStr);
+    const e = parseDate(endStr);
+
+    if (s && e) {
       if (now >= s && now <= e) {
         defaultIdx = idx;
+      } else {
+        const diff = Math.min(Math.abs(now.getTime() - s.getTime()), Math.abs(now.getTime() - e.getTime()));
+        if (diff < minDiff && now >= s) {
+          minDiff = diff;
+          defaultIdx = idx;
+        }
       }
     }
 
@@ -609,18 +652,13 @@ function populateWeekSelector() {
   updateWeekSubtitle(defaultIdx);
 }
 
-function formatDateShort(dateStr) {
-  if (!dateStr) return '';
-  const parts = dateStr.split('-');
-  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-  return dateStr;
-}
-
 function updateWeekSubtitle(idx) {
   const subtitle = document.getElementById('week_range_subtitle');
   if (!subtitle || !state.scheduleData?.ds_tuan_tkb?.[idx]) return;
   const w = state.scheduleData.ds_tuan_tkb[idx];
-  subtitle.textContent = `${formatDateShort(w.ngay_bat_dau?.split('T')[0])} - ${formatDateShort(w.ngay_ket_thuc?.split('T')[0])}`;
+  const startStr = (w.ngay_bat_dau || w.ngay_bd || w.tu_ngay || '').split('T')[0];
+  const endStr = (w.ngay_ket_thuc || w.ngay_kt || w.den_ngay || '').split('T')[0];
+  subtitle.textContent = `${formatDateShort(startStr)} - ${formatDateShort(endStr)}`;
 }
 
 /**
@@ -637,7 +675,7 @@ function renderWeekView(weekIndex) {
 
   container.innerHTML = '';
   const week = state.scheduleData.ds_tuan_tkb[weekIndex];
-  const classes = week.ds_thoi_khoa_bieu || [];
+  const classes = week.ds_thoi_khoa_bieu || week.ds_tkb || week.tkb || [];
 
   // Group classes by day of week
   const dayNames = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật'];
@@ -645,12 +683,8 @@ function renderWeekView(weekIndex) {
   const isEn = getLang() === 'en';
 
   // Build 7 calendar days starting from week's ngay_bat_dau in local date
-  const startDateStr = (week.ngay_bat_dau || '').split('T')[0];
-  let startDate = new Date();
-  if (startDateStr) {
-    const [sy, sm, sd] = startDateStr.split('-').map(Number);
-    startDate = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
-  }
+  const startDateStr = (week.ngay_bat_dau || week.ngay_bd || week.tu_ngay || '').split('T')[0];
+  let startDate = parseDate(startDateStr) || new Date();
 
   for (let i = 0; i < 7; i++) {
     const curDate = new Date(startDate);
