@@ -168,6 +168,14 @@ button, [role="button"], .day-accordion-header, .toggle-choice, .icon-action-btn
   font-size: 18px;
 }
 
+.brand-logo-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
 .brand-text {
   display: flex;
   flex-direction: column;
@@ -976,16 +984,35 @@ input:checked + .slider:before {
   margin-bottom: 10px;
 }
 .account-avatar {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
-  background-color: var(--bg-surface-raised);
+  background-color: #ffffff;
   border: 1px solid var(--border-subtle);
   flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.google-avatar {
+  background-color: #ffffff;
+}
+.portal-avatar {
+  background-color: #ffffff;
+}
+.account-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.portal-avatar .account-avatar-img {
+  width: 86%;
+  height: 86%;
+  object-fit: contain;
 }
 .account-meta { flex: 1; }
 .account-name-row {

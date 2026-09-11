@@ -1,8 +1,8 @@
 export const PERIOD_MAP = {
   1: { start: '06:45', end: '09:00' }, // Shift 1 (Tiết 1 to 3)
   4: { start: '09:15', end: '11:30' }, // Shift 2 (Tiết 4 to 6)
-  7: { start: '12:45', end: '15:00' }, // Shift 3 (Tiết 7 to 9)
-  10: { start: '15:15', end: '17:30' } // Shift 4 (Tiết 10 to 12)
+  7: { start: '12:30', end: '14:45' }, // Shift 3 (Tiết 7 to 9)
+  10: { start: '15:00', end: '17:15' } // Shift 4 (Tiết 10 to 12)
 };
 
 export const INDIVIDUAL_PERIOD_TIMES = {
@@ -12,15 +12,15 @@ export const INDIVIDUAL_PERIOD_TIMES = {
   4: { start: '09:15', end: '10:00' },
   5: { start: '10:00', end: '10:45' },
   6: { start: '10:45', end: '11:30' },
-  7: { start: '12:45', end: '13:30' },
-  8: { start: '13:30', end: '14:15' },
-  9: { start: '14:15', end: '15:00' },
-  10: { start: '15:15', end: '16:00' },
-  11: { start: '16:00', end: '16:45' },
-  12: { start: '16:45', end: '17:30' },
-  13: { start: '17:45', end: '18:30' },
-  14: { start: '18:30', end: '19:15' },
-  15: { start: '19:15', end: '20:00' }
+  7: { start: '12:30', end: '13:15' },
+  8: { start: '13:15', end: '14:00' },
+  9: { start: '14:00', end: '14:45' },
+  10: { start: '15:00', end: '15:45' },
+  11: { start: '15:45', end: '16:30' },
+  12: { start: '16:30', end: '17:15' },
+  13: { start: '18:00', end: '18:45' },
+  14: { start: '18:45', end: '19:30' },
+  15: { start: '19:30', end: '20:15' }
 };
 
 export function formatICSDateLocal(date) {
