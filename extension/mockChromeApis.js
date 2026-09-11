@@ -39,7 +39,7 @@
   const mockRuntime = {
     __isMock: true,
     getManifest: () => ({
-      version: '1.2.0',
+      version: '1.3.1',
       oauth2: {
         client_id: '1068393903577-5g3l76neofv7fgdtkshfpcqcf9rprh1n.apps.googleusercontent.com',
         scopes: [
@@ -215,7 +215,7 @@
             <input type="text" id="modal_google_name" value="Lê Hoàng Phúc" style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:13px;" />
           </div>
           <div style="display:flex; flex-direction:column; gap:8px;">
-            <button id="modal_btn_confirm" style="background:#2563eb; color:white; border:none; padding:9px 12px; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">
+            <button id="modal_btn_confirm" style="background:#dc2626; color:white; border:none; padding:9px 12px; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">
               Xác nhận kết nối Google
             </button>
             <button id="modal_btn_cancel" style="background:transparent; color:#6b7280; border:1px solid #e5e7eb; padding:8px 12px; border-radius:6px; font-size:13px; cursor:pointer;">
