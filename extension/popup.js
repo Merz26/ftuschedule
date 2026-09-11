@@ -1332,11 +1332,11 @@ async function handleStartSync() {
     if (statusHeader) statusHeader.textContent = t('sync_success');
     if (stepDetail) {
       stepDetail.textContent = getLang() === 'vi' 
-        ? `✓ Hoàn tất! Đã kiểm tra ${result.total} tiết học.` 
-        : `✓ Done! Checked ${result.total} classes.`;
+        ? `✓ Hoàn tất! Đã làm sạch ${result.clearedCount || 0} lớp cũ & đồng bộ ${result.insertedCount} lớp từ Cổng Đào Tạo.` 
+        : `✓ Done! Cleared ${result.clearedCount || 0} old classes & synced ${result.insertedCount} classes from portal.`;
     }
     if (counterLabel && result.total > 0) {
-      counterLabel.textContent = `${result.total} / ${result.total}`;
+      counterLabel.textContent = `${result.insertedCount} / ${result.total}`;
     }
 
     // Update stats
@@ -1346,18 +1346,18 @@ async function handleStartSync() {
     const elClash = document.getElementById('stat_clashes');
 
     if (elIns) elIns.textContent = result.insertedCount;
-    if (elUpd) elUpd.textContent = result.updatedCount;
+    if (elUpd) elUpd.textContent = result.clearedCount ?? result.updatedCount ?? 0;
     if (elSkip) elSkip.textContent = result.skippedCount;
     if (elClash) elClash.textContent = result.clashesCount;
 
     // Detailed log
     if (logBox) {
       if (result.changes && result.changes.length > 0) {
-        logBox.innerHTML = result.changes.slice(0, 10).map(c => `
-          <div>• [${c.type.toUpperCase()}] ${c.subject} (${c.room || 'Phòng'}) ${c.reason || ''}</div>
+        logBox.innerHTML = result.changes.slice(0, 15).map(c => `
+          <div>• [${c.type.toUpperCase()}] ${c.subject} ${c.room ? `(${c.room})` : ''} ${c.time ? `- ${c.time}` : ''} ${c.reason ? `(${c.reason})` : ''}</div>
         `).join('');
       } else {
-        logBox.innerHTML = `<div>✓ Đã kiểm tra ${result.total} tiết học. Tất cả đã đồng bộ chính xác, không cần chèn trùng lặp.</div>`;
+        logBox.innerHTML = `<div>✓ Đã làm sạch lịch tuần và đồng bộ chính xác dữ liệu từ Cổng Đào Tạo.</div>`;
       }
     }
 

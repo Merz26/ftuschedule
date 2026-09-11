@@ -4,12 +4,43 @@
  * Multi-Scope Sync, and Calendar Duplicate Cleaner.
  */
 
+let inMemoryCalendars = [];
+let inMemoryEvents = {};
+
+function getStoredMockCalendars() {
+  if (typeof localStorage !== 'undefined') {
+    try { return JSON.parse(localStorage.getItem('mockGoogleCalendars') || '[]'); } catch(e) {}
+  }
+  return inMemoryCalendars;
+}
+
+function setStoredMockCalendars(val) {
+  inMemoryCalendars = val;
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem('mockGoogleCalendars', JSON.stringify(val)); } catch(e) {}
+  }
+}
+
+function getStoredMockEvents() {
+  if (typeof localStorage !== 'undefined') {
+    try { return JSON.parse(localStorage.getItem('mockGoogleEvents') || '{}'); } catch(e) {}
+  }
+  return inMemoryEvents;
+}
+
+function setStoredMockEvents(val) {
+  inMemoryEvents = val;
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem('mockGoogleEvents', JSON.stringify(val)); } catch(e) {}
+  }
+}
+
 /**
  * Safe fetch helper for Google Calendar / OAuth APIs.
  * Handles development preview tokens (starting with 'ya29.studio_')
  * without mutating global window.fetch, and calls native fetch in production.
  */
-async function calendarApiFetch(url, options = {}) {
+export async function calendarApiFetch(url, options = {}) {
   const token = (options.headers?.Authorization || options.headers?.authorization || '').replace(/^Bearer\s+/i, '');
 
   if (token && token.startsWith('ya29.studio_')) {
@@ -18,7 +49,9 @@ async function calendarApiFetch(url, options = {}) {
     // Mock OAuth profile
     if (urlStr.includes('googleapis.com/oauth2/v2/userinfo')) {
       let googleAccount = {};
-      try { googleAccount = JSON.parse(localStorage.getItem('googleAccount') || '{}'); } catch(e) {}
+      if (typeof localStorage !== 'undefined') {
+        try { googleAccount = JSON.parse(localStorage.getItem('googleAccount') || '{}'); } catch(e) {}
+      }
       return {
         ok: true,
         status: 200,
@@ -33,7 +66,9 @@ async function calendarApiFetch(url, options = {}) {
     // Mock Primary Calendar
     if (urlStr.includes('googleapis.com/calendar/v3/users/me/calendarList/primary')) {
       let googleAccount = {};
-      try { googleAccount = JSON.parse(localStorage.getItem('googleAccount') || '{}'); } catch(e) {}
+      if (typeof localStorage !== 'undefined') {
+        try { googleAccount = JSON.parse(localStorage.getItem('googleAccount') || '{}'); } catch(e) {}
+      }
       const email = googleAccount.email || 'lehoangphuc.contact@gmail.com';
       return {
         ok: true,
@@ -45,10 +80,8 @@ async function calendarApiFetch(url, options = {}) {
       };
     }
 
-    let mockCalendars = [];
-    let mockEvents = {};
-    try { mockCalendars = JSON.parse(localStorage.getItem('mockGoogleCalendars') || '[]'); } catch(e) {}
-    try { mockEvents = JSON.parse(localStorage.getItem('mockGoogleEvents') || '{}'); } catch(e) {}
+    let mockCalendars = getStoredMockCalendars();
+    let mockEvents = getStoredMockEvents();
 
     // GET calendar list
     if (urlStr.includes('/users/me/calendarList')) {
@@ -70,7 +103,7 @@ async function calendarApiFetch(url, options = {}) {
         timeZone: body.timeZone || 'Asia/Ho_Chi_Minh'
       };
       mockCalendars.push(newCal);
-      try { localStorage.setItem('mockGoogleCalendars', JSON.stringify(mockCalendars)); } catch(e) {}
+      setStoredMockCalendars(mockCalendars);
       return {
         ok: true,
         status: 200,
@@ -88,7 +121,7 @@ async function calendarApiFetch(url, options = {}) {
       // DELETE event
       if (eventId && options.method === 'DELETE') {
         mockEvents[calId] = mockEvents[calId].filter(e => e.id !== eventId);
-        try { localStorage.setItem('mockGoogleEvents', JSON.stringify(mockEvents)); } catch(e) {}
+        setStoredMockEvents(mockEvents);
         return { ok: true, status: 204, json: async () => ({}) };
       }
 
@@ -111,7 +144,7 @@ async function calendarApiFetch(url, options = {}) {
           created: new Date().toISOString()
         };
         mockEvents[calId].push(newEvent);
-        try { localStorage.setItem('mockGoogleEvents', JSON.stringify(mockEvents)); } catch(e) {}
+        setStoredMockEvents(mockEvents);
         return {
           ok: true,
           status: 200,
@@ -130,7 +163,7 @@ async function calendarApiFetch(url, options = {}) {
             ...patchBody,
             updated: new Date().toISOString()
           };
-          try { localStorage.setItem('mockGoogleEvents', JSON.stringify(mockEvents)); } catch(e) {}
+          setStoredMockEvents(mockEvents);
           return {
             ok: true,
             status: 200,
@@ -520,8 +553,109 @@ function timeStringToMinutes(timeStr) {
 }
 
 /**
- * Synchronizes class schedules to Google Calendar with deduplication,
- * patch diffing, and support for multi-scope sync:
+ * Normalizes date string into YYYY-MM-DD.
+ * Handles both YYYY-MM-DD and DD/MM/YYYY inputs safely.
+ */
+export function normalizeIsoDate(dateStr) {
+  if (!dateStr) return '';
+  const raw = String(dateStr).trim().split('T')[0];
+  if (raw.includes('/')) {
+    const parts = raw.split('/');
+    if (parts.length === 3 && parts[2].length === 4) {
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  return raw;
+}
+
+/**
+ * Calculates standard Monday-to-Sunday date bounds for an academic week.
+ * Guarantees reliable week coverage across month and year boundaries.
+ */
+export function getWeekDateBounds(week) {
+  if (!week) return null;
+
+  let startStr = (week.ngay_bat_dau || week.ngay_bd || week.tu_ngay || '').split('T')[0];
+  let endStr = (week.ngay_ket_thuc || week.ngay_kt || week.den_ngay || '').split('T')[0];
+
+  const classes = week.ds_thoi_khoa_bieu || week.ds_tkb || week.tkb || [];
+  if (!startStr && classes.length > 0) {
+    const dates = classes
+      .map(c => (c.ngay_hoc || '').split('T')[0])
+      .filter(Boolean)
+      .map(normalizeIsoDate)
+      .sort();
+    if (dates.length > 0) {
+      startStr = dates[0];
+      if (!endStr) endStr = dates[dates.length - 1];
+    }
+  }
+
+  startStr = normalizeIsoDate(startStr);
+  if (!startStr || !startStr.includes('-')) return null;
+
+  const [sy, sm, sd] = startStr.split('-').map(Number);
+  if (!sy || !sm || !sd) return null;
+
+  const startDate = new Date(Date.UTC(sy, sm - 1, sd));
+  if (isNaN(startDate.getTime())) return null;
+
+  // FTU standard academic weeks begin on Monday (1) and conclude Sunday (0)
+  const day = startDate.getUTCDay();
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  const monDate = new Date(startDate.getTime() + diffToMon * 86400000);
+  const sunDate = new Date(monDate.getTime() + 6 * 86400000);
+
+  const pad = n => String(n).padStart(2, '0');
+  const mondayIso = `${monDate.getUTCFullYear()}-${pad(monDate.getUTCMonth() + 1)}-${pad(monDate.getUTCDate())}`;
+  const sundayIso = `${sunDate.getUTCFullYear()}-${pad(sunDate.getUTCMonth() + 1)}-${pad(sunDate.getUTCDate())}`;
+
+  // Time queries buffered by +/- 24h to avoid any timezone discrepancies
+  const queryMin = new Date(monDate.getTime() - 24 * 3600000);
+  const queryMax = new Date(sunDate.getTime() + 48 * 3600000);
+
+  return {
+    mondayIso,
+    sundayIso,
+    queryMin,
+    queryMax
+  };
+}
+
+/**
+ * Checks if a Google Calendar event represents an FTU university class.
+ * Differentiates university schedules from user personal events (dentist, family, etc.).
+ */
+export function isFtuClassEvent(ev) {
+  if (!ev || ev.status === 'cancelled') return false;
+  const priv = ev.extendedProperties?.private || {};
+  if (priv.app === 'ftu-calendar-sync') return true;
+  if (priv.id_tkb || priv.courseCode || priv.ma_mon) return true;
+
+  const desc = ev.description || '';
+  if (
+    desc.includes('Mã TKB:') ||
+    desc.includes('Tiết học:') ||
+    desc.includes('Phòng học:') ||
+    desc.includes('Giảng viên:') ||
+    desc.includes('Môn học:')
+  ) {
+    return true;
+  }
+
+  const summary = ev.summary || '';
+  if (extractCourseCode(summary)) return true;
+  if (summary.includes('(Dạy bù)') || summary.includes('Lớp:')) return true;
+
+  return false;
+}
+
+/**
+ * Synchronizes class schedules to Google Calendar.
+ * For every sync attempt, it clears out every class of the target week from the calendar
+ * before syncing that week back with the authoritative data from the portal.
+ *
+ * Supported scopes:
  * - 'this_week': Current active week
  * - 'from_this_week': Current week through semester end
  * - 'semester': All weeks in semester
@@ -547,7 +681,7 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
   }
 
   // 1. Get or create calendar with label "FTU Schedule"
-  const { calendarId, calendarName } = await getOrCreateFtuCalendar(token);
+  const { calendarId, calendarName, isSecondary } = await getOrCreateFtuCalendar(token);
 
   // 2. Filter weeks based on scope
   const allWeeks = scheduleData.ds_tuan_tkb || [];
@@ -562,82 +696,92 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
     targetWeeks = allWeeks;
   }
 
-  // Flatten classes to sync
-  const candidateClasses = [];
-  targetWeeks.forEach(week => {
-    (week.ds_thoi_khoa_bieu || []).forEach(item => {
-      candidateClasses.push(item);
-    });
-  });
-
-  if (candidateClasses.length === 0) {
+  if (targetWeeks.length === 0) {
     if (onProgress) {
       onProgress({
         phase: 'completed',
         current: 0,
         total: 0,
         percent: 100,
-        message: 'Không tìm thấy lớp học nào trong phạm vi đã chọn.'
+        message: 'Không tìm thấy tuần học nào phù hợp trong phạm vi đã chọn.'
       });
     }
     return {
       success: true,
+      clearedCount: 0,
       insertedCount: 0,
       updatedCount: 0,
       skippedCount: 0,
       clashesCount: 0,
       total: 0,
       calendarName,
-      message: 'Không tìm thấy lớp học nào trong phạm vi đã chọn.'
+      message: 'Không tìm thấy tuần học nào phù hợp trong phạm vi đã chọn.'
     };
   }
 
-  if (onProgress) {
-    onProgress({
-      phase: 'fetching',
-      current: 0,
-      total: candidateClasses.length,
-      percent: 15,
-      message: 'Đang quét lịch hiện tại để chống trùng lặp...'
-    });
-  }
+  let totalCandidateClasses = 0;
+  targetWeeks.forEach(w => {
+    totalCandidateClasses += (w.ds_thoi_khoa_bieu || w.ds_tkb || w.tkb || []).length;
+  });
 
-  // 3. Determine overall timeMin and timeMax for query
-  const dates = candidateClasses
-    .map(c => c.ngay_hoc ? new Date(c.ngay_hoc.split('T')[0]) : null)
-    .filter(d => d && !isNaN(d.getTime()));
-
-  let minDate = new Date();
-  let maxDate = new Date();
-  if (dates.length > 0) {
-    minDate = new Date(Math.min(...dates.map(d => d.getTime())) - 24 * 3600000);
-    maxDate = new Date(Math.max(...dates.map(d => d.getTime())) + 24 * 3600000);
-  }
-
-  // 4. Fetch existing calendar events for pre-insert deduplication
-  const existingEvents = await fetchGoogleEvents(token, minDate, maxDate, calendarId);
-
+  let clearedCount = 0;
   let insertedCount = 0;
-  let updatedCount = 0;
-  let skippedCount = 0;
   let clashesCount = 0;
   const changes = [];
 
-  // 5. Process each candidate class through Deduplication Engine
-  for (let i = 0; i < candidateClasses.length; i++) {
-    const item = candidateClasses[i];
-    const percent = Math.min(96, Math.round(15 + ((i + 1) / candidateClasses.length) * 80));
+  const totalSteps = targetWeeks.length * 2; // Step 1: Clear week, Step 2: Sync week
+  let currentStep = 0;
 
-    if (onProgress) {
-      onProgress({
-        phase: 'syncing',
-        current: i + 1,
-        total: candidateClasses.length,
-        percent,
-        subject: item.ten_mon,
-        room: item.ma_phong,
-        message: `Đang xử lý (${i + 1}/${candidateClasses.length}): ${item.ten_mon}`
+  // Process each target week: Clear existing classes -> Sync back from portal
+  for (let wIdx = 0; wIdx < targetWeeks.length; wIdx++) {
+    const week = targetWeeks[wIdx];
+    const weekLabel = week.tuan_hoc ? `Tuần ${week.tuan_hoc}` : `Tuần ${wIdx + 1}`;
+    const weekClasses = week.ds_thoi_khoa_bieu || week.ds_tkb || week.tkb || [];
+
+    // STEP A: Calculate date bounds for the target week
+    const bounds = getWeekDateBounds(week);
+
+    // STEP B: Clear out every class of the target week from Google Calendar
+    if (bounds) {
+      currentStep++;
+      const clearPercent = Math.min(95, Math.round((currentStep / totalSteps) * 85));
+
+      if (onProgress) {
+        onProgress({
+          phase: 'clearing',
+          current: insertedCount,
+          total: totalCandidateClasses,
+          percent: clearPercent,
+          message: `[${weekLabel}] Đang xóa sạch lớp cũ trên lịch (${bounds.mondayIso} - ${bounds.sundayIso})...`
+        });
+      }
+
+      // Query existing calendar events across this target week's window
+      const weekExistingEvents = await fetchGoogleEvents(token, bounds.queryMin, bounds.queryMax, calendarId);
+
+      // Filter events belonging strictly to this week's 7 calendar days that are university classes
+      const weekClassesToDelete = weekExistingEvents.filter(ev => {
+        if (!ev || ev.status === 'cancelled') return false;
+        const evStart = ev.start?.dateTime || ev.start?.date || '';
+        const evDate = normalizeIsoDate(evStart.split('T')[0]);
+        if (evDate < bounds.mondayIso || evDate > bounds.sundayIso) return false;
+        return isFtuClassEvent(ev);
       });
+
+      for (const ev of weekClassesToDelete) {
+        try {
+          await deleteGoogleEvent(token, ev.id, calendarId);
+          clearedCount++;
+          changes.push({
+            type: 'cleared',
+            subject: ev.summary || 'Lớp học',
+            time: normalizeIsoDate((ev.start?.dateTime || ev.start?.date || '').split('T')[0]),
+            reason: `Đã xóa lớp cũ của ${weekLabel}`
+          });
+        } catch (delErr) {
+          console.warn('[Sync] Could not delete old class event:', ev.id, delErr);
+        }
+      }
     }
 
     // Micro-delay in studio mock mode to ensure realistic, smooth visual progress
@@ -645,127 +789,123 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
       await new Promise(r => setTimeout(r, 20));
     }
 
-    const startPeriod = Number(item.tiet_bat_dau) || 1;
-    const periodsCount = Number(item.so_tiet) || 1;
-    const endPeriod = startPeriod + periodsCount - 1;
+    // STEP C: Sync that week back with the authoritative data from the portal
+    currentStep++;
+    const syncWeekPercent = Math.min(95, Math.round((currentStep / totalSteps) * 85));
 
-    const startTimeStr = PERIOD_TIMES[startPeriod]?.start || '06:45';
-    const endTimeStr = PERIOD_TIMES[endPeriod]?.end || '09:00';
-
-    const rawDate = item.ngay_hoc || '';
-    const dateStr = rawDate.split('T')[0];
-    if (!dateStr) continue;
-
-    const startDateTime = `${dateStr}T${startTimeStr}:00+07:00`;
-    const endDateTime = `${dateStr}T${endTimeStr}:00+07:00`;
-
-    const courseCode = item.ma_mon || extractCourseCode(item.ten_mon);
-    const isMakeup = Boolean(item.is_day_bu || (item.ten_mon || '').includes('Dạy bù') || (item.ghi_chu || '').includes('Dạy bù'));
-    const makeupTag = isMakeup ? ' (Dạy bù)' : '';
-    const summary = `${item.ten_mon}${makeupTag} (${courseCode})`;
-    const expectedLocation = item.ma_phong ? `Phòng ${item.ma_phong}` : '';
-    
-    const description = [
-      `Môn học: ${item.ten_mon}`,
-      `Mã môn: ${courseCode}`,
-      `Lớp: ${item.ten_lop || item.ma_lop || 'N/A'}`,
-      `Giảng viên: ${item.ten_giang_vien || 'Chưa cập nhật'}`,
-      `Phòng học: ${item.ma_phong || 'Chưa xếp phòng'}`,
-      `Tiết học: Tiết ${startPeriod} - ${endPeriod} (${periodsCount} tiết)`,
-      `Nhóm: ${item.ma_nhom || 'N/A'}`,
-      `Mã TKB: ${item.id_tkb || 'N/A'}`,
-      isMakeup ? 'Lưu ý: Lớp học bù' : ''
-    ].filter(Boolean).join('\n');
-
-    const expectedProperties = {
-      app: 'ftu-calendar-sync',
-      id_tkb: String(item.id_tkb || ''),
-      courseCode: String(courseCode),
-      ma_mon: String(courseCode),
-      ngay_hoc: String(dateStr),
-      tiet_bat_dau: String(startPeriod),
-      so_tiet: String(periodsCount),
-      ma_phong: String(item.ma_phong || ''),
-      ten_giang_vien: String(item.ten_giang_vien || '')
-    };
-
-    const eventPayload = {
-      summary,
-      location: expectedLocation,
-      description,
-      start: { dateTime: startDateTime, timeZone: 'Asia/Ho_Chi_Minh' },
-      end: { dateTime: endDateTime, timeZone: 'Asia/Ho_Chi_Minh' },
-      colorId: isMakeup ? '11' : '9', // Flamingo for Makeup, Grape for standard
-      extendedProperties: {
-        private: expectedProperties
-      }
-    };
-
-    // Run Pre-Insert Deduplication
-    const { matchedEvent, clashEvent } = findMatchingCalendarEvent({
-      dateStr,
-      startTimeStr,
-      endTimeStr,
-      courseCode,
-      id_tkb: item.id_tkb,
-      summary
-    }, existingEvents);
-
-    if (clashEvent) {
-      clashesCount++;
-      changes.push({
-        type: 'clash',
-        subject: item.ten_mon,
-        clashWith: clashEvent.summary,
-        time: `${dateStr} ${startTimeStr}`
+    if (onProgress) {
+      onProgress({
+        phase: 'syncing',
+        current: insertedCount,
+        total: totalCandidateClasses,
+        percent: syncWeekPercent,
+        message: `[${weekLabel}] Đang đồng bộ ${weekClasses.length} lớp học từ Cổng Đào Tạo...`
       });
     }
 
-    if (matchedEvent) {
-      // Check if location or details need update
-      const existingLoc = (matchedEvent.location || '').trim();
-      const newLoc = expectedLocation.trim();
-      const existingPriv = matchedEvent.extendedProperties?.private || {};
+    for (let cIdx = 0; cIdx < weekClasses.length; cIdx++) {
+      const item = weekClasses[cIdx];
+      const startPeriod = Number(item.tiet_bat_dau) || 1;
+      const periodsCount = Number(item.so_tiet) || 1;
+      const endPeriod = startPeriod + periodsCount - 1;
 
-      const roomChanged = existingLoc !== newLoc || (existingPriv.ma_phong && existingPriv.ma_phong !== String(item.ma_phong || ''));
-      const lecturerChanged = existingPriv.ten_giang_vien && existingPriv.ten_giang_vien !== String(item.ten_giang_vien || '');
-      const titleNeedsUpdate = matchedEvent.summary !== summary;
+      const startTimeStr = PERIOD_TIMES[startPeriod]?.start || '06:45';
+      const endTimeStr = PERIOD_TIMES[endPeriod]?.end || '09:00';
 
-      if (roomChanged || lecturerChanged || titleNeedsUpdate) {
-        // PATCH existing event to prevent duplicates!
-        await patchGoogleEvent(token, matchedEvent.id, eventPayload, calendarId);
-        updatedCount++;
+      const rawDate = item.ngay_hoc || '';
+      const dateStr = normalizeIsoDate(rawDate);
+      if (!dateStr) continue;
+
+      const startDateTime = `${dateStr}T${startTimeStr}:00+07:00`;
+      const endDateTime = `${dateStr}T${endTimeStr}:00+07:00`;
+
+      const courseCode = item.ma_mon || extractCourseCode(item.ten_mon);
+      const isMakeup = Boolean(item.is_day_bu || (item.ten_mon || '').includes('Dạy bù') || (item.ghi_chu || '').includes('Dạy bù'));
+      const makeupTag = isMakeup ? ' (Dạy bù)' : '';
+      const summary = `${item.ten_mon}${makeupTag} (${courseCode})`;
+      const expectedLocation = item.ma_phong ? `Phòng ${item.ma_phong}` : '';
+
+      const description = [
+        `Môn học: ${item.ten_mon}`,
+        `Mã môn: ${courseCode}`,
+        `Lớp: ${item.ten_lop || item.ma_lop || 'N/A'}`,
+        `Giảng viên: ${item.ten_giang_vien || 'Chưa cập nhật'}`,
+        `Phòng học: ${item.ma_phong || 'Chưa xếp phòng'}`,
+        `Tiết học: Tiết ${startPeriod} - ${endPeriod} (${periodsCount} tiết)`,
+        `Nhóm: ${item.ma_nhom || 'N/A'}`,
+        `Mã TKB: ${item.id_tkb || 'N/A'}`,
+        isMakeup ? 'Lưu ý: Lớp học bù' : ''
+      ].filter(Boolean).join('\n');
+
+      const expectedProperties = {
+        app: 'ftu-calendar-sync',
+        id_tkb: String(item.id_tkb || ''),
+        courseCode: String(courseCode),
+        ma_mon: String(courseCode),
+        ngay_hoc: String(dateStr),
+        tiet_bat_dau: String(startPeriod),
+        so_tiet: String(periodsCount),
+        ma_phong: String(item.ma_phong || ''),
+        ten_giang_vien: String(item.ten_giang_vien || '')
+      };
+
+      const eventPayload = {
+        summary,
+        location: expectedLocation,
+        description,
+        start: { dateTime: startDateTime, timeZone: 'Asia/Ho_Chi_Minh' },
+        end: { dateTime: endDateTime, timeZone: 'Asia/Ho_Chi_Minh' },
+        colorId: isMakeup ? '11' : '9', // Flamingo for Makeup, Grape for standard
+        extendedProperties: {
+          private: expectedProperties
+        }
+      };
+
+      // Check for internal clashes in the portal schedule (two classes at same day & period)
+      const internalClash = weekClasses.find((other, oIdx) => 
+        oIdx < cIdx && 
+        normalizeIsoDate(other.ngay_hoc) === dateStr && 
+        Number(other.tiet_bat_dau) === startPeriod
+      );
+      if (internalClash) {
+        clashesCount++;
         changes.push({
-          type: 'updated',
+          type: 'clash',
           subject: item.ten_mon,
-          room: item.ma_phong,
-          reason: roomChanged ? `Phòng học cập nhật: ${newLoc || 'Chưa xếp'}` : 'Đồng bộ lại thông tin'
+          clashWith: internalClash.ten_mon,
+          time: `${dateStr} ${startTimeStr}`
         });
-        // Update local cache of event
-        Object.assign(matchedEvent, eventPayload);
-      } else {
-        // Identical: Skip insertion entirely (prevents duplicate!)
-        skippedCount++;
       }
-    } else {
-      // Insert fresh event
-      const created = await insertGoogleEvent(token, eventPayload, calendarId);
+
+      // Insert clean event for this target week
+      await insertGoogleEvent(token, eventPayload, calendarId);
       insertedCount++;
-      existingEvents.push(created || eventPayload);
       changes.push({
         type: 'inserted',
         subject: item.ten_mon,
         room: item.ma_phong,
         time: `${dateStr} ${startTimeStr}`
       });
+
+      if (onProgress) {
+        onProgress({
+          phase: 'syncing',
+          current: insertedCount,
+          total: totalCandidateClasses,
+          percent: Math.min(98, syncWeekPercent + Math.round(((cIdx + 1) / weekClasses.length) * (85 / totalSteps))),
+          subject: item.ten_mon,
+          room: item.ma_phong,
+          message: `[${weekLabel}] Đang chèn: ${item.ten_mon}`
+        });
+      }
     }
   }
 
   if (onProgress) {
     onProgress({
       phase: 'completed',
-      current: candidateClasses.length,
-      total: candidateClasses.length,
+      current: insertedCount,
+      total: totalCandidateClasses,
       percent: 100,
       message: 'Đồng bộ hoàn tất thành công!'
     });
@@ -774,11 +914,12 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
   const lastSyncData = {
     timestamp: Date.now(),
     dateStr: new Date().toISOString(),
+    clearedCount,
     insertedCount,
-    updatedCount,
-    skippedCount,
+    updatedCount: 0,
+    skippedCount: 0,
     clashesCount,
-    total: candidateClasses.length,
+    total: totalCandidateClasses,
     scope
   };
 
@@ -797,11 +938,12 @@ export async function syncScheduleToGoogleCalendar(token, scheduleData, options 
     success: true,
     calendarName,
     calendarId,
+    clearedCount,
     insertedCount,
-    updatedCount,
-    skippedCount,
+    updatedCount: 0,
+    skippedCount: 0,
     clashesCount,
-    total: candidateClasses.length,
+    total: totalCandidateClasses,
     changes,
     timestamp: lastSyncData.timestamp,
     syncInfo: lastSyncData
