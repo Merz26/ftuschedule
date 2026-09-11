@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="vi" style="width: 390px; height: 590px;">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FTU Schedule Sync</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="theme-light" style="width: 390px; height: 590px;">
+  <!-- Mock shim for Studio preview & web environments (auto-noop in genuine Chrome extension) -->
+  <script src="mockChromeApis.js"></script>
+
+  <div class="app-layout">
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="brand">
+        <img src="ftu_logo.png" alt="FTU Logo" class="brand-logo-img">
+        <div class="brand-text">
+          <h1 id="ui_top_title" class="brand-title">FTU Schedule Sync</h1>
+          <div class="brand-subtitle">
+            <span id="active_semester_chip" class="chip chip-primary">HK 1 2026</span>
+            <span id="header_portal_indicator" class="status-dot dot-gray" title="Portal Status"></span>
+            <span id="header_google_indicator" class="status-dot dot-gray" title="Google Status"></span>
+          </div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="btn_open_tab" class="icon-action-btn" title="Mở trong tab mới / Toàn màn hình (Open in Full Window)" aria-label="Open in full window">
+          <span style="font-size:13px; line-height:1;">⤢</span>
+        </button>
+        <button id="btn_toggle_lang" class="icon-action-btn lang-toggle-btn" title="Chuyển đổi ngôn ngữ (VN / EN)" aria-label="Toggle Language">
+          <span id="lang_indicator" class="lang-text">VN</span>
+          <span id="lang_flag" style="display:none;"></span>
+        </button>
+        <button id="btn_toggle_theme" class="icon-action-btn" title="Toggle Light/Dark Theme" aria-label="Toggle Theme">
+          <span id="theme_icon">🌓</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Non-Intrusive Update Notification Banner / Toast Overlay -->
+    <div id="update_notification_overlay" class="update-banner" style="display: none;">
+      <div class="update-banner-header">
+        <div class="update-banner-icon">✨</div>
+        <div class="update-banner-text">
+          <div class="update-title-row">
+            <span id="ui_update_available_title" class="update-banner-title">Có bản cập nhật mới!</span>
+            <span id="update_badge_version" class="update-version-badge">v1.4.0</span>
+          </div>
+          <p id="ui_update_available_desc" class="update-banner-desc">Đã có phiên bản mới hơn trên GitHub.</p>
+        </div>
+        <button id="btn_dismiss_update_close" class="update-close-btn" title="Bỏ qua" aria-label="Dismiss">&times;</button>
+      </div>
+      <div class="update-banner-actions">
+        <a id="link_update_release" href="https://github.com/Merz26/ftuscheduler/releases/latest" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-xs update-cta-btn">
+          <span id="ui_btn_update_now">Cập nhật ngay</span> ↗
+        </a>
+        <button id="btn_dont_show_again" class="btn btn-ghost btn-xs">
+          <span id="ui_btn_dont_show_again">Không hiện lại</span>
+        </button>
+      </div>
+      <div class="update-banner-footer">
+        <label class="update-optout-label">
+          <input type="checkbox" id="chk_update_optout">
+          <span id="ui_opt_out_updates">Tắt tự động kiểm tra cập nhật</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Main Scrollable Content Container -->
+    <main class="main-content" id="main_content">
+      <!-- Route Guard Warning Banner (shown when either service is disconnected) -->
+      <div id="route_guard_banner" class="alert-banner alert-warning" style="display:none;">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-text">
+          <strong id="ui_alert_title">Cần kết nối tài khoản</strong>
+          <p id="ui_alert_desc" class="text-xs">Vui lòng kết nối Google Calendar và Cổng Đào Tạo FTU để bắt đầu đồng bộ thời khóa biểu.</p>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- TAB 1: SCHEDULE (LỊCH HỌC)                     -->
+      <!-- ============================================== -->
+      <div id="view_schedule" class="tab-view active">
+        <!-- Segmented View Toggle: Today (Day) vs Tuần (Week) -->
+        <div class="segmented-control">
+          <button id="btn_view_day" class="segmented-btn active">
+            <span id="ui_view_day">Hôm nay</span>
+          </button>
+          <button id="btn_view_week" class="segmented-btn">
+            <span id="ui_view_week">Tuần</span>
+          </button>
+        </div>
+
+        <!-- SUB-VIEW: DAY VIEW -->
+        <div id="subview_day" class="schedule-subview active">
+          <div class="view-header-row">
+            <div class="date-badge-wrap">
+              <span id="today_date_display" class="date-text">Thứ Tư, 09/09/2026</span>
+              <span class="badge badge-neutral" id="ui_today_badge">Hôm nay</span>
+            </div>
+            <button id="btn_refresh_today" class="btn-subtle text-xs" title="Refresh Schedule">🔄 Làm mới</button>
+          </div>
+
+          <div id="today_agenda_container" class="agenda-list">
+            <!-- Classes injected dynamically -->
+            <div class="empty-state" id="empty_today_box">
+              <span class="empty-icon">🎉</span>
+              <p id="ui_no_classes_today" class="empty-text">Hôm nay không có tiết học nào!</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-VIEW: WEEK VIEW (VERTICAL LAYOUT) -->
+        <div id="subview_week" class="schedule-subview" style="display:none;">
+          <div class="week-selector-card card">
+            <div class="form-group">
+              <div class="flex-between" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <label for="select_week_dropdown" class="form-label" id="ui_select_week" style="margin-bottom:0;">Chọn tuần học</label>
+                <button id="btn_refresh_week" class="btn-subtle text-xs" style="padding: 2px 8px; font-size:11px; cursor:pointer;" title="Tải lại thời khóa biểu">🔄 <span id="ui_btn_refresh_week">Tải lịch</span></button>
+              </div>
+              <select id="select_week_dropdown" class="select-input">
+                <option value="0">Đang tải danh sách tuần...</option>
+              </select>
+            </div>
+            <div class="week-actions-bar">
+              <span id="week_range_subtitle" class="text-xs text-muted">07/09/2026 - 13/09/2026</span>
+              <div class="week-toggle-buttons">
+                <button id="btn_expand_all_days" class="btn-subtle text-xs"><span id="ui_expand_all">Mở tất cả</span></button>
+                <button id="btn_collapse_all_days" class="btn-subtle text-xs"><span id="ui_collapse_all">Thu gọn</span></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Vertical Expandable Day Cards (Thứ 2 to Chủ Nhật) -->
+          <div id="week_days_vertical_container" class="vertical-days-list">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- TAB 2: SYNC (ĐỒNG BỘ)                          -->
+      <!-- ============================================== -->
+      <div id="view_sync" class="tab-view">
+        <!-- Target Calendar Banner -->
+        <div class="card target-calendar-card">
+          <div class="card-header-compact">
+            <span class="section-icon">📅</span>
+            <div>
+              <div class="text-xs text-muted" id="ui_target_calendar_label">Lịch Google Calendar đích</div>
+              <div class="font-semibold text-sm" id="ui_target_calendar_name">FTU Schedule</div>
+            </div>
+            <span class="badge badge-primary ml-auto" id="target_cal_badge">Secondary</span>
+          </div>
+        </div>
+
+        <!-- Visual Status Indicator: Last Successful Synchronization -->
+        <div class="card sync-indicator-card" id="last_sync_indicator_card">
+          <div class="sync-indicator-header">
+            <div class="sync-indicator-status-dot-wrap">
+              <span class="status-dot status-dot-idle" id="sync_status_dot"></span>
+              <span class="font-semibold text-xs text-main" id="ui_last_sync_indicator_title">Lần đồng bộ thành công gần nhất</span>
+            </div>
+            <span class="badge badge-neutral text-xs" id="sync_status_pill">Chưa đồng bộ</span>
+          </div>
+          <div class="sync-indicator-body">
+            <div class="sync-timestamp-row">
+              <span class="sync-timestamp-icon">🕒</span>
+              <span class="sync-timestamp-val font-semibold text-xs" id="last_sync_time_display">Chưa có lịch sử đồng bộ thành công</span>
+              <span class="sync-relative-tag text-xs text-muted" id="last_sync_relative_display"></span>
+            </div>
+            <div class="sync-indicator-meta text-xs text-muted" id="last_sync_meta_display" style="display:none;"></div>
+          </div>
+        </div>
+
+        <!-- Multi-Scope Sync Selector Card -->
+        <div class="card sync-scope-card">
+          <h2 class="card-title" id="ui_sync_title">Đồng bộ Lịch Google</h2>
+          <p class="card-desc text-xs text-muted" id="ui_sync_desc">
+            Hệ thống tự động kiểm tra trùng lặp và cập nhật phòng học khi có thay đổi từ Cổng Đào Tạo.
+          </p>
+
+          <div class="form-group" style="margin-top: 10px;">
+            <label for="select_sync_scope" class="form-label" id="ui_sync_scope_label">Phạm vi đồng bộ</label>
+            <select id="select_sync_scope" class="select-input">
+              <option value="this_week" id="opt_scope_this_week">Đồng bộ tuần này (7 ngày hiện tại)</option>
+              <option value="from_this_week" id="opt_scope_from_this_week">Đồng bộ từ tuần này đến hết học kỳ</option>
+              <option value="semester" id="opt_scope_semester">Đồng bộ cả học kỳ</option>
+            </select>
+          </div>
+
+          <div class="form-group" style="margin-top: 8px;">
+            <label class="checkbox-label text-xs" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="check_resync_deleted" checked />
+              <span id="ui_resync_deleted_label">Tự động đồng bộ lại các tiết học đã bị xóa trên Calendar</span>
+            </label>
+          </div>
+
+          <button id="btn_start_sync_action" class="btn btn-primary btn-block" style="margin-top:12px;">
+            <span id="btn_sync_icon">🔄</span>
+            <span id="ui_btn_start_sync">Bắt đầu Đồng bộ</span>
+          </button>
+
+          <!-- Sync Progress & Detailed Outcome Box -->
+          <div id="sync_status_box" class="sync-status-box" style="display:none;">
+            <div class="sync-progress-header-row">
+              <div class="sync-progress-title-wrap">
+                <span class="sync-spinner-icon" id="sync_spinner_icon">🔄</span>
+                <span id="sync_status_header" class="sync-status-header">Đang đồng bộ...</span>
+              </div>
+              <span id="sync_progress_percent" class="sync-progress-percent">0%</span>
+            </div>
+
+            <!-- Enhanced Animated Progress Bar Track -->
+            <div class="sync-progress-bar-wrap" role="progressbar" id="sync_progress_bar_wrap" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+              <div id="sync_progress_bar" class="sync-progress-bar" style="width: 0%;"></div>
+            </div>
+
+            <div class="sync-progress-subtext-row">
+              <span id="sync_progress_step_detail" class="sync-progress-step-detail text-muted">Đang chuẩn bị lịch...</span>
+              <span id="sync_progress_counter" class="sync-progress-counter text-muted">0 / 0</span>
+            </div>
+
+            <div class="sync-metrics-grid" id="sync_metrics_grid">
+              <div class="metric-item">
+                <span class="metric-value text-green" id="stat_inserted">0</span>
+                <span class="metric-label" id="ui_stat_inserted">Đã thêm</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-value text-blue" id="stat_updated">0</span>
+                <span class="metric-label" id="ui_stat_updated">Cập nhật</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-value text-amber" id="stat_skipped">0</span>
+                <span class="metric-label" id="ui_stat_skipped">Bỏ qua</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-value text-red" id="stat_clashes">0</span>
+                <span class="metric-label" id="ui_stat_clashes">Trùng lịch</span>
+              </div>
+            </div>
+            <div id="sync_details_log" class="sync-log-box text-xs"></div>
+          </div>
+        </div>
+
+        <!-- Deduplication & Duplicate Cleaner Card (Fixes image.png duplicates!) -->
+        <div class="card dedup-card">
+          <div class="card-header-compact">
+            <span class="section-icon">🧹</span>
+            <div>
+              <h3 class="card-title text-sm" id="ui_dedup_title">Dọn dẹp sự kiện trùng lặp</h3>
+              <p class="text-xs text-muted" id="ui_dedup_desc">
+                Quét và loại bỏ các sự kiện trùng lịch, trùng môn học tạo bởi các lần đồng bộ trước trên Google Calendar.
+              </p>
+            </div>
+          </div>
+          <button id="btn_clean_duplicates_action" class="btn btn-outline btn-block btn-sm" style="margin-top:10px;">
+            <span id="ui_btn_clean_duplicates">🧹 Quét & Dọn trùng lặp</span>
+          </button>
+          <!-- Dedup Progress Bar during active duplicate cleanup -->
+          <div id="dedup_progress_box" class="sync-progress-bar-wrap" style="display:none; margin-top:8px;">
+            <div id="dedup_progress_bar" class="sync-progress-bar" style="width: 0%;"></div>
+          </div>
+          <div id="dedup_result_box" class="text-xs text-muted mt-2" style="display:none;"></div>
+        </div>
+
+        <!-- Automated Background Sync Card -->
+        <div class="card auto-sync-card">
+          <div class="card-header-toggle">
+            <div>
+              <h3 class="card-title text-sm" id="ui_auto_sync_title">Tự động đồng bộ ngầm</h3>
+              <p class="text-xs text-muted" id="ui_auto_sync_desc">
+                Định kỳ kiểm tra cập nhật phòng và lịch bù ngay cả khi tiện ích không mở.
+              </p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggle_auto_sync">
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div id="auto_sync_config_section" class="auto-sync-options" style="display:none;">
+            <div class="grid-2-cols">
+              <div class="form-group">
+                <label for="select_auto_freq" class="form-label" id="ui_auto_sync_freq">Tần suất</label>
+                <select id="select_auto_freq" class="select-input">
+                  <option value="daily" id="opt_freq_daily">Hàng ngày</option>
+                  <option value="weekly" id="opt_freq_weekly">Hàng tuần</option>
+                </select>
+              </div>
+              <div class="form-group" id="group_auto_day" style="display:none;">
+                <label for="select_auto_day" class="form-label" id="ui_day_of_week">Ngày</label>
+                <select id="select_auto_day" class="select-input">
+                  <option value="1">Thứ 2</option>
+                  <option value="2">Thứ 3</option>
+                  <option value="3">Thứ 4</option>
+                  <option value="4">Thứ 5</option>
+                  <option value="5">Thứ 6</option>
+                  <option value="6">Thứ 7</option>
+                  <option value="0">Chủ Nhật</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top:8px;">
+              <label for="input_auto_time" class="form-label" id="ui_sync_time_label">Thời gian chạy</label>
+              <input type="time" id="input_auto_time" class="text-input" value="06:00">
+            </div>
+
+            <button id="btn_save_auto_sync" class="btn btn-subtle btn-block btn-sm" style="margin-top:10px;">
+              <span id="ui_btn_save_auto_sync">Lưu lịch đồng bộ</span>
+            </button>
+            <div id="auto_sync_status_label" class="text-xs text-muted mt-2"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- TAB 3: ACCOUNTS (TÀI KHOẢN)                     -->
+      <!-- ============================================== -->
+      <div id="view_accounts" class="tab-view">
+        <h2 class="section-heading" id="ui_accounts_title">Quản lý Tài khoản</h2>
+
+        <!-- Google Calendar Account Card -->
+        <div class="card account-box" id="google_account_card">
+          <div class="account-card-header">
+            <div class="account-avatar google-avatar">
+              <img src="google_logo.jpg" alt="Google" class="account-avatar-img">
+            </div>
+            <div class="account-meta">
+              <div class="account-name-row">
+                <span class="font-semibold text-sm" id="ui_google_account">Tài khoản Google</span>
+                <span id="badge_google_status" class="badge badge-amber">Chưa kết nối</span>
+              </div>
+              <div id="google_account_email" class="text-xs text-muted">Chưa kết nối</div>
+              <div id="google_account_name" class="text-xs text-gray font-medium"></div>
+            </div>
+          </div>
+          <div class="account-actions-row">
+            <button id="btn_connect_google" class="btn btn-primary btn-sm">Kết nối Google Account</button>
+            <button id="btn_switch_google" class="btn btn-outline btn-sm" style="display:none;">Đổi tài khoản</button>
+            <button id="btn_disconnect_google" class="btn btn-outline btn-sm" style="display:none;">Đăng xuất</button>
+          </div>
+        </div>
+
+        <!-- FTU Student Portal Account Card -->
+        <div class="card account-box" id="portal_account_card">
+          <div class="account-card-header">
+            <div class="account-avatar portal-avatar">
+              <img src="ftu_logo.png" alt="FTU" class="account-avatar-img">
+            </div>
+            <div class="account-meta">
+              <div class="account-name-row">
+                <span class="font-semibold text-sm" id="ui_portal_account">Cổng Đào Tạo FTU</span>
+                <span id="badge_portal_status" class="badge badge-red">Chưa kết nối</span>
+              </div>
+              <div id="portal_student_name_display" class="text-xs text-muted">Chưa xác thực thông tin</div>
+              <div id="portal_student_subdetails" class="text-xs text-gray" style="display:none;">
+                <span id="disp_student_id"></span> • <span id="disp_student_email"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Schedule API Verification Status Banner -->
+          <div class="tkb-status-pill" id="tkb_status_pill">
+            <span id="tkb_icon">⏳</span>
+            <span id="ui_tkb_verification_title" class="font-medium">Xác thực API Thời khóa biểu</span>
+            <span id="badge_tkb_verify" class="badge badge-neutral ml-auto">Chờ kiểm tra</span>
+          </div>
+
+          <!-- Student Credentials Drawer -->
+          <div class="credentials-drawer card-inner">
+            <div class="drawer-header">
+              <span class="font-semibold text-xs uppercase text-muted" id="ui_portal_credentials">Thông tin đăng nhập Cổng</span>
+              <button id="btn_toggle_creds_form" class="btn-subtle text-xs">Chỉnh sửa</button>
+            </div>
+            <div id="creds_form_wrap" class="creds-form-body" style="display:none;">
+              <div class="form-group">
+                <label for="input_student_id" class="form-label" id="ui_student_id">Mã sinh viên</label>
+                <input type="text" id="input_student_id" class="text-input" placeholder="VD: 2415115057">
+              </div>
+              <div class="form-group">
+                <label for="input_student_password" class="form-label" id="ui_password">Mật khẩu</label>
+                <div class="password-input-wrap">
+                  <input type="password" id="input_student_password" class="text-input" placeholder="Nhập mật khẩu">
+                  <button type="button" id="btn_toggle_password_mask" class="btn-mask text-xs"><span id="ui_show_password">Hiện</span></button>
+                </div>
+              </div>
+              <button id="btn_save_portal_creds" class="btn btn-primary btn-block btn-sm" style="margin-top:8px;">
+                <span id="ui_btn_save_creds">Lưu & Xác thực kết nối</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connection Diagnostics Card -->
+        <div class="card diagnostics-card">
+          <h3 class="card-title text-sm" id="ui_diagnostics_title">Chẩn đoán Kết nối Trực tiếp</h3>
+          <p class="text-xs text-muted mb-2" id="ui_diag_desc">
+            Kiểm tra phản hồi thực tế từ các endpoint REST API riêng của Cổng Đào Tạo:
+          </p>
+          <div class="diag-buttons-row">
+            <button id="btn_diag_sem" class="btn btn-outline btn-sm">
+              <span id="ui_diag_sem_btn">Kiểm tra /tkb-hocky (Học kỳ)</span>
+              <span id="diag_sem_status" class="status-pill-sub"></span>
+            </button>
+            <button id="btn_diag_week" class="btn btn-outline btn-sm">
+              <span id="ui_diag_week_btn">Kiểm tra /tkb-tuan (Thời khóa biểu)</span>
+              <span id="diag_week_status" class="status-pill-sub"></span>
+            </button>
+          </div>
+          <div id="diag_result_output" class="diag-output-box text-xs" style="display:none;"></div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- TAB 4: SETTINGS (CÀI ĐẶT)                      -->
+      <!-- ============================================== -->
+      <div id="view_settings" class="tab-view">
+        <h2 class="section-heading" id="ui_settings_title">Tùy chọn & Công cụ</h2>
+
+        <!-- Appearance Card -->
+        <div class="card">
+          <h3 class="card-title text-sm mb-3" id="ui_appearance_title">Giao diện</h3>
+          <div class="setting-row">
+            <span class="setting-label" id="ui_theme_label">Chế độ giao diện</span>
+            <div class="toggle-group">
+              <button id="btn_theme_light" class="toggle-choice active">Sáng</button>
+              <button id="btn_theme_dark" class="toggle-choice">Tối</button>
+            </div>
+          </div>
+          <div class="setting-row mt-3">
+            <span class="setting-label" id="ui_language_label">Ngôn ngữ</span>
+            <div class="toggle-group">
+              <button id="btn_lang_vi" class="toggle-choice active">VN</button>
+              <button id="btn_lang_en" class="toggle-choice">EN</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Offline Toolkit & Manual Fallback Card -->
+        <div class="card">
+          <h3 class="card-title text-sm" id="ui_offline_tools_title">Bộ công cụ Ngoại tuyến (.ics)</h3>
+          <p class="text-xs text-muted mb-3" id="ui_offline_tools_desc">
+            Xuất file lịch chuẩn RFC 5545 để nhập vào bất kỳ ứng dụng lịch nào mà không qua máy chủ trung gian.
+          </p>
+
+          <div class="drop-zone" id="excel_drop_zone">
+            <span class="drop-icon">📊</span>
+            <p id="ui_drop_excel" class="drop-text text-xs">Kéo thả Export_TKB.xlsx vào đây hoặc bấm để chọn</p>
+            <input type="file" id="file_excel_input" accept=".xlsx,.xls" style="display:none;">
+          </div>
+
+          <div class="ics-export-actions" style="margin-top:10px;">
+            <button id="btn_export_semester_ics" class="btn btn-outline btn-block btn-sm">
+              <span id="ui_export_semester_ics">Xuất TKB cả kỳ (.ics)</span>
+            </button>
+            <button id="btn_export_makeup_ics" class="btn btn-outline btn-block btn-sm mt-2">
+              <span id="ui_export_makeup_ics">Xuất TKB học bù (.ics)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- App Updates Card -->
+        <div class="card update-settings-card">
+          <div class="setting-row">
+            <div>
+              <h3 class="card-title text-sm" id="ui_updates_section_title">Cập nhật ứng dụng</h3>
+              <p class="text-xs text-muted" id="ui_updates_section_desc">
+                Kiểm tra phiên bản mới nhất từ kho mã nguồn GitHub.
+              </p>
+            </div>
+            <span class="version-tag" id="current_version_badge">v1.3.1</span>
+          </div>
+
+          <div class="setting-row mt-3">
+            <span class="setting-label text-xs" id="ui_updates_auto_check_label">Tự động kiểm tra cập nhật</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle_auto_update_checks" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="mt-3">
+            <button id="btn_manual_check_updates" class="btn btn-outline btn-block btn-sm">
+              <span id="ui_btn_check_updates_now">Kiểm tra bản cập nhật</span>
+            </button>
+          </div>
+          <div id="update_check_status_msg" class="text-xs text-muted mt-2" style="display: none;"></div>
+        </div>
+
+        <!-- About & Privacy Card -->
+        <div class="card about-card">
+          <div class="about-header">
+            <span class="font-semibold text-sm" id="ui_about_title">Thông tin & Quyền riêng tư</span>
+            <span class="version-tag" id="app_version_tag">v1.3.1</span>
+          </div>
+          <p class="text-xs text-muted mb-2" id="ui_privacy_notice">
+            Tiện ích hoạt động 100% trên thiết bị của bạn. Thông tin đăng nhập và dữ liệu lịch được lưu an toàn trong trình duyệt và không bao giờ gửi tới bất kỳ máy chủ trung gian nào.
+          </p>
+          <div class="badge-row">
+            <span class="badge badge-success text-xs" id="ui_client_side_badge">100% Phía Client</span>
+            <span class="badge badge-neutral text-xs">Manifest V3</span>
+          </div>
+
+          <!-- Documentation, TOS & Privacy Links to GitHub Wiki -->
+          <div class="about-links-section">
+            <a href="https://github.com/Merz26/ftuscheduler/wiki" target="_blank" rel="noopener noreferrer" class="about-link-row" id="link_repo_wiki">
+              <span class="about-link-icon">📖</span>
+              <div class="about-link-info">
+                <span class="about-link-title" id="ui_link_wiki_title">Wiki & Hướng dẫn sử dụng</span>
+                <span class="about-link-desc text-muted" id="ui_link_wiki_desc">github.com/Merz26/ftuscheduler</span>
+              </div>
+              <span class="about-link-ext">↗</span>
+            </a>
+
+            <a href="https://github.com/Merz26/ftuscheduler" target="_blank" rel="noopener noreferrer" class="about-link-row" id="link_tos">
+              <span class="about-link-icon">📜</span>
+              <div class="about-link-info">
+                <span class="about-link-title" id="ui_link_tos_title">Mã nguồn & Releases</span>
+                <span class="about-link-desc text-muted" id="ui_link_tos_desc">Kho mã nguồn chính thức trên GitHub</span>
+              </div>
+              <span class="about-link-ext">↗</span>
+            </a>
+
+            <a href="https://github.com/Merz26/ftuscheduler" target="_blank" rel="noopener noreferrer" class="about-link-row" id="link_privacy_policy">
+              <span class="about-link-icon">🔒</span>
+              <div class="about-link-info">
+                <span class="about-link-title" id="ui_link_privacy_title">Chính sách bảo mật</span>
+                <span class="about-link-desc text-muted" id="ui_link_privacy_desc">Cam kết bảo mật 100% dữ liệu cục bộ</span>
+              </div>
+              <span class="about-link-ext">↗</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Fixed Mobile-Style Bottom Navigation Bar -->
+    <nav class="bottom-nav">
+      <button id="tab_btn_schedule" class="nav-btn active" data-view="view_schedule">
+        <span class="nav-icon">📅</span>
+        <span class="nav-label" id="nav_label_schedule">Lịch học</span>
+      </button>
+      <button id="tab_btn_sync" class="nav-btn" data-view="view_sync">
+        <span class="nav-icon">🔄</span>
+        <span class="nav-label" id="nav_label_sync">Đồng bộ</span>
+      </button>
+      <button id="tab_btn_accounts" class="nav-btn" data-view="view_accounts">
+        <span class="nav-icon">👤</span>
+        <span class="nav-label" id="nav_label_accounts">Tài khoản</span>
+        <span id="nav_accounts_badge" class="nav-alert-dot" style="display:none;"></span>
+      </button>
+      <button id="tab_btn_settings" class="nav-btn" data-view="view_settings">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label" id="nav_label_settings">Cài đặt</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- SheetJS Dependency -->
+  <script src="xlsx.mini.min.js"></script>
+  <!-- Main Application Logic -->
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
