@@ -66,13 +66,48 @@ function aistudioMediaPlugin(): Plugin {
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), aistudioMediaPlugin()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      aistudioMediaPlugin(),
+      {
+        name: 'vite-plugin-copy-extension',
+        closeBundle() {
+          const distDir = path.resolve(__dirname, 'dist');
+          const extSrc = path.resolve(__dirname, 'extension');
+          const extDest = path.resolve(distDir, 'extension');
+          const mockSrc = path.resolve(__dirname, 'mockChromeApis.js');
+          const mockDest = path.resolve(distDir, 'mockChromeApis.js');
+
+          if (!fs.existsSync(distDir)) {
+            fs.mkdirSync(distDir, { recursive: true });
+          }
+          if (fs.existsSync(extSrc)) {
+            fs.cpSync(extSrc, extDest, { recursive: true });
+          }
+          if (fs.existsSync(mockSrc)) {
+            fs.copyFileSync(mockSrc, mockDest);
+          }
+        },
+      },
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
+      allowedHosts: true,
+      proxy: {
+        '/ftu-api': {
+          target: 'https://qldt.hcmc.ftu.edu.vn',
+          changeOrigin: true,
+          rewrite: (path: string) => path.replace(/^\/ftu-api/, ''),
+          secure: false,
+        },
+      },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

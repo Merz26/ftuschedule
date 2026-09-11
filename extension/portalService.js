@@ -1,5 +1,7 @@
 // Portal APIs and Token Extraction
-const BASE_URL = 'https://qldt.hcmc.ftu.edu.vn';
+const isMockOrWeb = typeof window !== 'undefined' && 
+  (!window.chrome?.runtime?.id || window.chrome?.runtime?.__isMock);
+const BASE_URL = isMockOrWeb ? '/ftu-api' : 'https://qldt.hcmc.ftu.edu.vn';
 
 export async function loginToPortal(studentId, password) {
   console.log(`[Login Flow] Initiating login for student ID: ${studentId}`);
